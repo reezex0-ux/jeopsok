@@ -1,0 +1,6 @@
+import { timingSafeEqual } from "node:crypto";
+import type { RequestHandler } from "express";
+import type { AppConfig } from "./config.js";
+export function tokensEqual(actual:string,expected:string):boolean{const a=Buffer.from(actual);const b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
+export function createBearerAuth(config:AppConfig):RequestHandler{return(request,response,next)=>{if(config.allowNoAuth&&!config.authToken){next();return;}const authorization=request.header("authorization");const match=authorization?.match(/^Bearer\s+(.+)$/i);if(match?.[1]&&config.authToken&&tokensEqual(match[1],config.authToken)){next();return;}response.status(401).set("WWW-Authenticate",'Bearer realm="jeopsok"').json({jsonrpc:"2.0",error:{code:-32001,message:"Unauthorized"},id:null});};}
+export function createHostValidation(config:AppConfig):RequestHandler{return(request,response,next)=>{if(!config.allowedHosts?.length){next();return;}const rawHost=request.header("host");let hostname="";try{hostname=new URL(`http://${rawHost??""}`).hostname.toLowerCase();}catch{}if(!config.allowedHosts.includes(hostname)){response.status(403).json({jsonrpc:"2.0",error:{code:-32002,message:"Host header is not allowed"},id:null});return;}next();};}
