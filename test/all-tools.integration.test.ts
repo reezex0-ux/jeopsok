@@ -8,11 +8,11 @@ import { loadConfig } from "../src/config.js";
 import { startHttpServer, type RunningHttpServer } from "../src/http-server.js";
 import { createServices } from "../src/mcp-server.js";
 
-describe("13-tool public surface", () => {
+describe("full-profile 13-tool surface", () => {
   let root:string; let running:RunningHttpServer; let client:Client;
   beforeAll(async()=>{
     root=await mkdtemp(path.join(os.tmpdir(),"jeopsok-tools-"));
-    const config=loadConfig({MCP_AUTH_TOKEN:"x",MCP_HOST:"127.0.0.1",MCP_DEFAULT_CWD:root},root); config.port=0;
+    const config=loadConfig({MCP_AUTH_TOKEN:"x",MCP_HOST:"127.0.0.1",MCP_DEFAULT_CWD:root,JEOPSOK_PROFILE:"full"},root); config.port=0;
     running=await startHttpServer(config,createServices(config));
     const address=running.httpServer.address() as AddressInfo;
     client=new Client({name:"tools-test",version:"1"},{versionNegotiation:{mode:{pin:"2026-07-28"}}});

@@ -8,14 +8,14 @@ import { loadConfig, type AppConfig } from "../src/config.js";
 import { startHttpServer, type RunningHttpServer } from "../src/http-server.js";
 import { createServices, type McpServices } from "../src/mcp-server.js";
 
-const PUBLIC_TOOLS = [
-  "exec_command", "write_stdin", "read_process", "terminate_process", "list_processes",
-  "list_directory", "stat_path", "read_file", "write_file", "replace_in_file",
-  "upload_file", "download_file", "remove_path",
+const WORKSPACE_TOOLS = [
+  "list_directory", "stat_path", "read_file", "write_file",
+  "replace_in_file", "upload_file", "download_file", "remove_path",
 ] as const;
 
 describe("Jeopsok MCP server", () => {
   let temporaryDirectory: string;
+  let outsideDirectory: string;
   let config: AppConfig;
   let services: McpServices;
   let running: RunningHttpServer;
@@ -23,6 +23,7 @@ describe("Jeopsok MCP server", () => {
 
   beforeAll(async () => {
     temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "jeopsok-http-test-"));
+    outsideDirectory = await mkdtemp(path.join(os.tmpdir(), "jeopsok-outside-test-"));
     config = loadConfig({ MCP_AUTH_TOKEN: "integration-secret", MCP_HOST: "127.0.0.1", MCP_DEFAULT_CWD: temporaryDirectory }, temporaryDirectory);
     config.port = 0;
     services = createServices(config);
@@ -33,55 +34,48 @@ describe("Jeopsok MCP server", () => {
 
   afterAll(async () => {
     await running.close();
-    await rm(temporaryDirectory, { recursive: true, force: true });
+    await Promise.all([temporaryDirectory, outsideDirectory].map(root => rm(root, { recursive: true, force: true })));
   });
 
-  it("serves MCP 2026-07-28 with exactly 13 public tools", async () => {
-    const client = new Client({ name: "modern-test", version: "1" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
-    const transport = new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: { Authorization: "Bearer integration-secret" } } });
-    await client.connect(transport);
+  async function connect(version: "modern" | "legacy" = "modern"): Promise<Client> {
+    const client = new Client(
+      { name: `${version}-test`, version: "1" },
+      version === "modern" ? { versionNegotiation: { mode: { pin: "2026-07-28" } } } : undefined,
+    );
+    await client.connect(new StreamableHTTPClientTransport(endpoint, {
+      requestInit: { headers: { Authorization: "Bearer integration-secret" } },
+    }));
+    return client;
+  }
+
+  it("serves MCP 2026-07-28 with safe workspace tools by default", async () => {
+    const client = await connect();
     try {
-      expect(transport.sessionId).toBeUndefined();
-      expect(client.getServerVersion()).toMatchObject({ name: "jeopsok", version: "0.1.0" });
-      const list = await client.listTools();
-      expect(list.tools.map(t => t.name).sort()).toEqual([...PUBLIC_TOOLS].sort());
+      expect(client.getServerVersion()).toMatchObject({ name: "jeopsok", version: "0.2.0" });
+      expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual([...WORKSPACE_TOOLS].sort());
+      const write = await client.callTool({ name: "write_file", arguments: { path: "inside.txt", content: "ok" } });
+      expect(write.isError).not.toBe(true);
+      const outside = await client.callTool({ name: "read_file", arguments: { path: path.join(outsideDirectory, "secret.txt") } });
+      expect(outside.isError).toBe(true);
     } finally { await client.close(); }
   });
 
-  it("keeps process state across independent stateless requests", async () => {
-    const client = new Client({ name: "state-test", version: "1" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
-    const transport = new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: { Authorization: "Bearer integration-secret" } } });
-    await client.connect(transport);
+  it("keeps the same restricted surface for the 2025-era stateless fallback", async () => {
+    const client = await connect("legacy");
     try {
-      const started = await client.callTool({ name: "exec_command", arguments: { cmd: "node -e \"setTimeout(() => console.log('state-ok'), 120)\"", yieldTimeMs: 0 } });
-      const state = (started.structuredContent ?? {}) as Record<string, unknown>;
-      const sessionId = String(state.sessionId);
-      expect(state).toMatchObject({ running: true, completed: false });
-      let read = await client.callTool({ name: "read_process", arguments: { sessionId, waitMs: 3000 } });
-      let body = (read.structuredContent ?? {}) as Record<string, unknown>;
-      let output = String(body.stdout ?? "");
-      if (body.running === true) {
-        read = await client.callTool({ name: "read_process", arguments: { sessionId, afterSeq: body.nextSeq, waitMs: 3000 } });
-        body = (read.structuredContent ?? {}) as Record<string, unknown>;
-        output += String(body.stdout ?? "");
-      }
-      expect(output).toContain("state-ok");
-      expect(body).toMatchObject({ running: false, completed: true, exitCode: 0 });
+      expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual([...WORKSPACE_TOOLS].sort());
     } finally { await client.close(); }
   });
 
-  it("keeps a stateless legacy fallback for 2025-era clients", async () => {
-    const client = new Client({ name: "legacy-test", version: "1" });
-    const transport = new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: { Authorization: "Bearer integration-secret" } } });
-    await client.connect(transport);
-    try {
-      expect(transport.sessionId).toBeUndefined();
-      expect((await client.listTools()).tools.some(t => t.name === "exec_command")).toBe(true);
-    } finally { await client.close(); }
-  });
-
-  it("reports modern stateless health", async () => {
+  it("reports the active permission profile without exposing root paths", async () => {
     const health = await fetch(new URL("/health", endpoint));
-    expect(await health.json()).toMatchObject({ service: "jeopsok", version: "0.1.0", transportMode: "mcp-2026-stateless", protocolRevision: "2026-07-28", activeMcpSessions: 0 });
+    const body = await health.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
+      service: "jeopsok", version: "0.2.0", transportMode: "mcp-2026-stateless",
+      protocolRevision: "2026-07-28", activeMcpSessions: 0,
+      accessProfile: "workspace", filesystemRestricted: true,
+      allowedRootCount: 1, commandExecutionEnabled: false, unrestrictedHostAccess: false,
+    });
+    expect(JSON.stringify(body)).not.toContain(temporaryDirectory);
   });
 });

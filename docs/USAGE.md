@@ -1,97 +1,45 @@
 # Usage guide
 
-Jeopsok exposes 13 deliberately focused MCP tools.
+Jeopsok's visible MCP tools depend on `JEOPSOK_PROFILE`.
 
-## Commands
+## Profiles and tool catalogs
 
-### `exec_command`
+### readonly
 
-Runs a shell command using the configured default shell, or an explicitly supplied shell. If the command does not finish within `yieldTimeMs`, Jeopsok returns immediately with a process `sessionId`.
+Exposes four tools: `list_directory`, `stat_path`, `read_file`, `download_file`.
 
-Useful arguments:
+### workspace (default)
 
-- `cmd`: command text
-- `workdir`: working directory
-- `shell`: override shell executable
-- `login`: login-shell semantics on POSIX shells
-- `env`: environment variable overrides
-- `stdin`: initial input
-- `timeoutMs`: hard runtime limit (`0` means none)
-- `yieldTimeMs`: how long the MCP request waits before returning a handle
-- `maxOutputBytes`: bounded output returned in one response
+Adds `write_file`, `replace_in_file`, `upload_file`, and `remove_path`. Every path must stay inside `JEOPSOK_ALLOWED_ROOTS`; if no roots are supplied, `MCP_DEFAULT_CWD` is used.
 
-Example:
+### operator
 
-```text
-exec_command(
-  cmd="npm test",
-  workdir="/srv/project",
-  yieldTimeMs=1000
-)
+Adds the five command/process tools. `JEOPSOK_ALLOWED_COMMANDS` is mandatory. Example:
+
+```dotenv
+JEOPSOK_PROFILE=operator
+JEOPSOK_ALLOWED_COMMANDS=git,node
+JEOPSOK_ALLOWED_ENV=CI
 ```
 
-If the job is still running, use `read_process` rather than repeating the command.
+Operator rejects shell control syntax and unapproved environment overrides. The allowlist controls which executable starts; it does not sandbox what an allowed executable can do.
 
-## Process handles
+### full
 
-### `read_process`
-
-Poll output and status. Pass the previous `nextSeq` as `afterSeq` to receive only newer output.
-
-### `write_stdin`
-
-Sends input to an existing process. `closeStdin=true` closes the input stream afterward.
-
-### `terminate_process`
-
-Sends `SIGINT`, `SIGTERM`, or `SIGKILL`. `SIGTERM` can escalate after the configured grace period.
-
-### `list_processes`
-
-Lists running and recently completed process handles retained by the service.
-
-Process handles are runtime state, not MCP transport sessions. They work across independent stateless HTTP requests while the same Jeopsok service process remains alive.
+All 13 tools with unrestricted host paths and shell execution. Use only as explicit remote-shell-equivalent access.
 
 ## Files
 
-### `list_directory`
+`list_directory` lists permitted directories without recursively following directory symlinks. `stat_path` returns metadata. `read_file` reads bounded UTF-8/base64 chunks. `download_file` returns base64 chunks. Workspace/operator/full also expose `write_file`, `replace_in_file`, `upload_file`, and `remove_path`.
 
-Lists a directory, optionally recursively with entry/depth limits.
+Path enforcement checks both normalized path location and real symlink resolution. A path lexically inside the workspace that resolves through a symlink to an outside directory is rejected.
 
-### `stat_path`
+## Commands and process handles
 
-Returns file/directory/symlink metadata.
+`exec_command` exists only in operator/full. If a command continues beyond `yieldTimeMs`, Jeopsok returns a process `sessionId`. Use `read_process`, `write_stdin`, `terminate_process`, and `list_processes` for follow-up.
 
-### `read_file`
+Operator defaults `login=false`, blocks custom `shell`, and allows environment overrides only for names listed in `JEOPSOK_ALLOWED_ENV`.
 
-Reads a bounded chunk as UTF-8 or base64. Continue from `nextOffset` until `eof=true`.
+Full mode permits the original unrestricted shell behavior.
 
-### `write_file`
-
-Creates, overwrites, or appends UTF-8/base64 content. Parent directories can be created automatically.
-
-### `replace_in_file`
-
-Exact text replacement with ambiguity protection. By default the old text must occur exactly once.
-
-### `upload_file` / `download_file`
-
-Chunked base64 transfer for binary or large files.
-
-### `remove_path`
-
-Permanently deletes a file or directory. There is no trash/recycle-bin layer.
-
-## Operations intentionally not exposed as separate tools
-
-Jeopsok does not expose dedicated MCP tools for `mkdir`, copy, move, chmod, hashing, Git, package management, or build systems. They are ordinary host operations and can be performed through `exec_command`. Keeping them out of the tool catalog reduces schema size and tool-choice ambiguity.
-
-## Example agent tasks
-
-- "Show disk and memory usage."
-- "Find why this systemd service is failing."
-- "Run the test suite in `/srv/app` and summarize failures."
-- "Read `/etc/nginx/nginx.conf`, replace this exact server name, then run `nginx -t`."
-- "Start the build, return immediately, and poll until it completes."
-
-Remember that the effective security boundary is the operating-system account running Jeopsok.
+Process handles persist across independent MCP HTTP requests while the Jeopsok service remains alive. They are not MCP sessions.

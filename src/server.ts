@@ -13,7 +13,9 @@ async function main(): Promise<void> {
 
   console.log(`jeopsok listening at ${endpointUrl}`);
   console.log(`default cwd: ${config.defaultCwd}`);
-  console.log("execution mode: unrestricted host access");
+  console.log(`access profile: ${config.accessProfile}`);
+  console.log(`filesystem: ${config.accessProfile === "full" ? "unrestricted" : `${config.allowedRoots.length} allowed root(s)`}`);
+  console.log(`command execution: ${config.accessProfile === "full" ? "unrestricted" : config.accessProfile === "operator" ? "allowlisted" : "disabled"}`);
   console.log(config.allowNoAuth && !config.authToken ? "authentication: upstream/private tunnel" : "authentication: bearer token");
 
   let shuttingDown = false;

@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { AccessPolicy } from "../src/access-policy.js";
 import { FileService } from "../src/file-service.js";
 
 describe("FileService", () => {
@@ -17,6 +18,7 @@ describe("FileService", () => {
       maxChunkBytes: 1024 * 1024,
       maxEditFileBytes: 1024 * 1024,
       maxOutputBytes: 1024 * 1024,
+      accessPolicy: new AccessPolicy({ profile: "workspace", defaultCwd: temporaryDirectory, allowedRoots: [temporaryDirectory], allowedCommands: [], allowedEnv: [] }),
     });
   });
 

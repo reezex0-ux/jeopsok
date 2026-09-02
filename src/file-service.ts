@@ -23,6 +23,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 
+import type { AccessPolicy, PathIntent } from "./access-policy.js";
 import { errorMessage } from "./errors.js";
 import { expandPath } from "./paths.js";
 
@@ -35,6 +36,7 @@ export interface FileServiceOptions {
   maxChunkBytes: number;
   maxEditFileBytes: number;
   maxOutputBytes: number;
+  accessPolicy: AccessPolicy;
 }
 
 export interface ListDirectoryOptions {
@@ -174,15 +176,12 @@ export class FileService {
     this.#options = options;
   }
 
-  resolve(inputPath: string, cwd?: string): string {
-    const base = cwd
-      ? expandPath(cwd, this.#options.defaultCwd)
-      : this.#options.defaultCwd;
-    return expandPath(inputPath, base);
+  resolve(inputPath: string, cwd?: string, intent: PathIntent = "read"): string {
+    return this.#options.accessPolicy.resolvePath(inputPath, cwd, intent);
   }
 
   async getInfo(inputPath: string, cwd?: string): Promise<Record<string, unknown>> {
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "metadata");
     const info = await lstat(resolvedPath);
     const result: Record<string, unknown> = {
       path: resolvedPath,
@@ -206,7 +205,7 @@ export class FileService {
     cwd: string | undefined,
     options: ListDirectoryOptions = {},
   ): Promise<Record<string, unknown>> {
-    const root = this.resolve(inputPath, cwd);
+    const root = this.resolve(inputPath, cwd, "read");
     const recursive = options.recursive ?? false;
     const maxDepth = Math.max(0, Math.min(options.maxDepth ?? 8, 100));
     const maxEntries = Math.max(1, Math.min(options.maxEntries ?? 1000, 50_000));
@@ -266,7 +265,7 @@ export class FileService {
     maxBytes = 256 * 1024,
     encoding: FileContentEncoding = "utf8",
   ): Promise<Record<string, unknown>> {
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "read");
     const info = await stat(resolvedPath);
     if (!info.isFile()) {
       throw new Error(`${resolvedPath} is not a regular file`);
@@ -316,7 +315,7 @@ export class FileService {
     createParents: boolean,
     fileMode?: number,
   ): Promise<Record<string, unknown>> {
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "write");
     const data = decodeContent(content, encoding);
     if (createParents) {
       await mkdir(path.dirname(resolvedPath), { recursive: true });
@@ -346,7 +345,7 @@ export class FileService {
     truncate: boolean,
     createParents: boolean,
   ): Promise<Record<string, unknown>> {
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "write");
     const data = decodeBase64(dataBase64);
     if (data.length > this.#options.maxChunkBytes) {
       throw new Error(
@@ -421,7 +420,7 @@ export class FileService {
     if (oldText.length === 0) {
       throw new Error("oldText must not be empty");
     }
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "write");
     const info = await stat(resolvedPath);
     if (info.size > this.#options.maxEditFileBytes) {
       throw new Error(
@@ -457,7 +456,7 @@ export class FileService {
     cwd: string | undefined,
     options: { checkOnly: boolean; reverse: boolean; threeWay: boolean },
   ): Promise<Record<string, unknown>> {
-    const resolvedCwd = this.resolve(".", cwd);
+    const resolvedCwd = this.resolve(".", cwd, "write");
     const temporaryDirectory = await mkdtemp(
       path.join(os.tmpdir(), "remote-dev-mcp-patch-"),
     );
@@ -517,7 +516,7 @@ export class FileService {
     recursive: boolean,
     mode?: number,
   ): Promise<Record<string, unknown>> {
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "write");
     await mkdir(resolvedPath, {
       recursive,
       ...(mode === undefined ? {} : { mode }),
@@ -532,8 +531,8 @@ export class FileService {
     recursive: boolean,
     force: boolean,
   ): Promise<Record<string, unknown>> {
-    const source = this.resolve(sourcePath, cwd);
-    const destination = this.resolve(destinationPath, cwd);
+    const source = this.resolve(sourcePath, cwd, "read");
+    const destination = this.resolve(destinationPath, cwd, "write");
     if (source === destination) {
       throw new Error("Source and destination paths must be different");
     }
@@ -568,8 +567,8 @@ export class FileService {
     cwd: string | undefined,
     overwrite: boolean,
   ): Promise<Record<string, unknown>> {
-    const source = this.resolve(sourcePath, cwd);
-    const destination = this.resolve(destinationPath, cwd);
+    const source = this.resolve(sourcePath, cwd, "delete");
+    const destination = this.resolve(destinationPath, cwd, "write");
     if (source === destination) {
       return { source, destination, moved: false, samePath: true };
     }
@@ -661,7 +660,7 @@ export class FileService {
     recursive: boolean,
     force: boolean,
   ): Promise<Record<string, unknown>> {
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "delete");
     await rm(resolvedPath, { recursive, force });
     return { path: resolvedPath, removed: true };
   }
@@ -671,7 +670,7 @@ export class FileService {
     cwd: string | undefined,
     mode: number,
   ): Promise<Record<string, unknown>> {
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "write");
     await chmod(resolvedPath, mode);
     return { path: resolvedPath, mode: `0${mode.toString(8)}` };
   }
@@ -681,7 +680,7 @@ export class FileService {
     cwd: string | undefined,
     algorithm: "sha256" | "sha512" | "md5",
   ): Promise<Record<string, unknown>> {
-    const resolvedPath = this.resolve(inputPath, cwd);
+    const resolvedPath = this.resolve(inputPath, cwd, "read");
     const hash = createHash(algorithm);
     await new Promise<void>((resolve, reject) => {
       const stream = createReadStream(resolvedPath);

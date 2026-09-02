@@ -37,3 +37,7 @@ The optional stdio entry is included for local MCP clients. SDK v2 can negotiate
 
 - MCP: https://modelcontextprotocol.io/
 - MCP SDK: https://github.com/modelcontextprotocol/typescript-sdk
+
+## Permission profiles and discovery
+
+Jeopsok registers tools per server instance according to `JEOPSOK_PROFILE`, so `tools/list` only advertises capabilities available under the active policy. This applies equally to modern 2026-07-28 traffic and the stateless 2025-era fallback.

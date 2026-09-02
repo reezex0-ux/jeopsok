@@ -1,6 +1,6 @@
 {
   "name": "jeopsok",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Jeopsok (\uc811\uc18d): a minimal stateless MCP remote runtime for command, process, and file access",
   "license": "MIT",
   "type": "module",
