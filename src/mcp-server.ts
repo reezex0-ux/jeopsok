@@ -75,7 +75,7 @@ export function createMcpServer(config: AppConfig, services: McpServices): McpSe
   const server = new McpServer(
     {
       name: "jeopsok",
-      version: "0.3.1",
+      version: "0.4.0",
       ...(config.publicUrl ? { websiteUrl: config.publicUrl } : {}),
     },
     {
