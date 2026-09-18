@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { exportJWK, generateKeyPair, SignJWT, type KeyLike } from "jose";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { loadConfig, type AppConfig } from "../src/config.js";
@@ -31,7 +31,7 @@ describe("external OAuth resource-server authorization", () => {
   let config: AppConfig;
   let running: RunningHttpServer;
   let jwksServer: HttpServer;
-  let privateKey: KeyLike;
+  let privateKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
   let issuer: string;
   let resourceUrl: string;
   let baseUrl: string;
