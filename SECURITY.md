@@ -1,6 +1,6 @@
 # Security model
 
-Jeopsok v0.3 is **safe by default, not a sandbox**. Permission profiles reduce the registered MCP capability surface, but the operating-system account remains the final host security boundary.
+Jeopsok v0.3.1 is **safe by default, not a sandbox**. Permission profiles reduce the registered MCP capability surface, but the operating-system account remains the final host security boundary.
 
 ## Permission profiles
 
@@ -27,7 +27,11 @@ Jeopsok supports three deployment postures:
 
 For OAuth deployments, prefer a dedicated `MCP_OAUTH_APPROVAL_KEY` and leave `MCP_AUTH_TOKEN` empty unless a static bearer fallback is intentionally required. OAuth state contains registered clients and hashed token records; keep `MCP_OAUTH_STATE_FILE` on private storage with restrictive permissions.
 
-Do not expose `MCP_ALLOW_NO_AUTH=true` directly to an untrusted network.
+`MCP_ALLOW_NO_AUTH=true` is rejected for non-loopback HTTP listeners. `MCP_TRUST_PROXY_HOPS>0` is also rejected unless the listener is loopback, preventing direct clients from bypassing the intended proxy boundary. OAuth rate limits key on the TCP peer address and do not trust X-Forwarded-For.
+
+Dynamic OAuth registrations are bounded by `MCP_OAUTH_MAX_CLIENTS`; old inactive clients are pruned after `MCP_OAUTH_CLIENT_RETENTION_SECONDS`.
+
+CodeAct unattended mode is server-owned. Client labels, request metadata, and explicit tool arguments cannot enable it; only `MCP_RUN_MODE=unattended` in the server environment can remove interactive budgets.
 
 ## Recommended deployment
 
