@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthInfo, OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from "@modelcontextprotocol/server";
 import { InvalidClientMetadataError, InvalidGrantError, InvalidScopeError, InvalidTargetError, UnauthorizedClientError } from "@modelcontextprotocol/server-legacy/auth";
@@ -202,6 +202,7 @@ class PersistentOAuthStore implements OAuthRegisteredClientsStore {
   private async persist(): Promise<void> {
     const directory = path.dirname(this.stateFile);
     await mkdir(directory, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") await chmod(directory, 0o700);
     const temporaryFile = `${this.stateFile}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
     try {
       await writeFile(temporaryFile, `${JSON.stringify(this.state, null, 2)}\n`, {
