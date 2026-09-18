@@ -16,7 +16,16 @@ async function main(): Promise<void> {
   console.log(`access profile: ${config.accessProfile}`);
   console.log(`filesystem: ${config.accessProfile === "full" ? "unrestricted" : `${config.allowedRoots.length} allowed root(s)`}`);
   console.log(`command execution: ${config.accessProfile === "full" ? "unrestricted" : config.accessProfile === "operator" ? "allowlisted" : "disabled"}`);
-  console.log(config.allowNoAuth && !config.authToken ? "authentication: upstream/private tunnel" : "authentication: bearer token");
+  console.log(
+    config.allowNoAuth && !config.authToken && !config.oauthEnabled
+      ? "authentication: upstream/private tunnel"
+      : config.oauthEnabled
+        ? config.authToken
+          ? "authentication: bearer token + OAuth 2.1"
+          : "authentication: OAuth 2.1"
+        : "authentication: bearer token",
+  );
+  console.log(`CodeAct: ${services.codeActManager ? "enabled (full profile)" : "disabled"}`);
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
