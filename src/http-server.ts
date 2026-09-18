@@ -11,7 +11,7 @@ import { toNodeHandler } from "@modelcontextprotocol/node";
 import express, { type Request, type RequestHandler, type Response } from "express";
 
 import { createBearerAuth, createHostValidation } from "./auth.js";
-import type { AppConfig } from "./config.js";
+import { assertSafeHttpConfig, type AppConfig } from "./config.js";
 import { errorMessage } from "./errors.js";
 import { createMcpServer, type McpServices } from "./mcp-server.js";
 import { JeopsokOAuthProvider, OAUTH_SCOPES } from "./oauth.js";
@@ -91,6 +91,7 @@ export async function startHttpServer(
   config: AppConfig,
   services: McpServices,
 ): Promise<RunningHttpServer> {
+  assertSafeHttpConfig(config);
   const app = express();
   app.disable("x-powered-by");
   if (config.trustProxyHops > 0) app.set("trust proxy", config.trustProxyHops);
