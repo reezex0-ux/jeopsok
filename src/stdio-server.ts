@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return; shuttingDown = true;
     console.error(`received ${signal}; shutting down`);
-    try { await handle.close(); await services.processManager.shutdown(); process.exitCode = 0; }
+    try { await handle.close(); await services.processManager.shutdown(); await services.codeActManager?.shutdown(); process.exitCode = 0; }
     catch (error) { console.error("shutdown failed:", errorMessage(error)); process.exitCode = 1; }
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
