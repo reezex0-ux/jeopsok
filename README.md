@@ -1,71 +1,74 @@
 # 접속 — Jeopsok
 
-**Jeopsok (접속)** is a small, stateless MCP remote runtime for command/process control and filesystem access. The public edition uses the MCP TypeScript SDK v2 and targets MCP `2026-07-28` while keeping the SDK's stateless 2025-era fallback.
+**Jeopsok (접속)** is a safe-by-default remote agent runtime for MCP clients. It combines a small stateless MCP tool surface with explicit workload handles, permission profiles, built-in OAuth 2.1, and optional persistent Python CodeAct sessions.
 
-**v0.2 is safe by default:** the default `workspace` profile exposes file tools only inside configured roots. Remote command execution is not available unless the operator explicitly selects `operator` or `full`.
+Jeopsok targets MCP `2026-07-28` over Streamable HTTP while retaining the SDK's stateless compatibility path for older clients.
+
+## v0.3 highlights
+
+- Safe permission profiles remain the default: `readonly`, `workspace`, `operator`, `full`
+- Built-in OAuth 2.1 authorization server with DCR, Authorization Code + PKCE (S256), refresh rotation, revocation, and protected-resource metadata
+- Persistent CodeAct Python sessions for multi-step work without repeated MCP round trips
+- Interactive vs. unattended CodeAct run modes with configurable budgets and checkpoints
+- Structured MCP request logs and `X-Request-Id` tracing
+- Linux and native Windows command execution
 
 ```text
 MCP client
    |
-   | MCP 2026-07-28 / Streamable HTTP
+   | HTTPS / Streamable HTTP
    v
 Jeopsok
    |
+   +-- authentication: bearer and/or OAuth 2.1
    +-- permission profile
-   +-- process handles (when enabled)
-   `-- filesystem roots
+   +-- explicit process handles
+   +-- filesystem policy
+   `-- CodeAct workers (full profile only)
 ```
 
 ## Permission profiles
 
-| Profile | Public tools | Filesystem | Commands |
-| --- | ---: | --- | --- |
-| `readonly` | 4 | read/list/stat/download inside roots | disabled |
-| `workspace` **default** | 8 | read/write/transfer/delete inside roots | disabled |
-| `operator` | 13 | workspace-restricted file tools | allowlisted executables only |
-| `full` | 13 | unrestricted | unrestricted |
+| Profile | Filesystem | Commands | CodeAct |
+| --- | --- | --- | --- |
+| `readonly` | read/list/stat/download inside roots | disabled | disabled |
+| `workspace` **default** | read/write/transfer/delete inside roots | disabled | disabled |
+| `operator` | workspace-restricted | allowlisted executables | disabled |
+| `full` | unrestricted | unrestricted | optional |
 
-Profiles change the **actual MCP tool catalog**. A readonly client does not merely receive permission errors for write/exec tools—the tools are absent from `tools/list`.
+Profiles change the actual MCP tool catalog. Tools that are outside the selected capability boundary are not registered.
 
-For `readonly`, `workspace`, and `operator`, `JEOPSOK_ALLOWED_ROOTS` is enforced against absolute paths, `..` traversal, and resolved symlink targets. If omitted, the root defaults to `MCP_DEFAULT_CWD`.
+For `readonly`, `workspace`, and `operator`, `JEOPSOK_ALLOWED_ROOTS` is enforced against normalized paths and resolved symlink targets. If omitted, it defaults to `MCP_DEFAULT_CWD`.
 
-`operator` requires `JEOPSOK_ALLOWED_COMMANDS`. Jeopsok rejects shell control syntax, login shells, custom shell overrides, and unapproved environment overrides. This is a capability allowlist, not a sandbox: an allowed executable such as `python`, `bash`, `npm`, `docker`, or a service manager may itself provide broad host access. See [SECURITY.md](SECURITY.md).
-
-## Why stateless MCP matters
-
-Jeopsok is stateless at the **MCP transport layer**, not necessarily at the workload layer. Modern requests are independent HTTP exchanges and do not rely on a long-lived MCP protocol session or `Mcp-Session-Id`.
-
-When command tools are enabled, a long-running command can return a Jeopsok `sessionId`. Later independent MCP requests can use that explicit workload handle with `read_process`, `write_stdin`, or `terminate_process`.
-
-```text
-exec_command(..., yieldTimeMs=0)
--> { sessionId: "...", running: true }
-
-read_process(sessionId="...")
--> { stdout: "...", running: false }
-```
-
-The process handle is Jeopsok runtime state, not MCP transport state. It is lost if the Jeopsok service process restarts.
+`operator` requires `JEOPSOK_ALLOWED_COMMANDS`. This is a capability allowlist, not a sandbox: allowing an interpreter, shell, container runtime, package manager, or service manager can provide broader host access than the filesystem profile suggests.
 
 ## Tools
 
 Filesystem tools:
 
-- read: `list_directory`, `stat_path`, `read_file`, `download_file`
-- mutate: `write_file`, `replace_in_file`, `upload_file`, `remove_path`
+- `list_directory`, `stat_path`, `read_file`, `download_file`
+- `write_file`, `replace_in_file`, `upload_file`, `remove_path` outside readonly
 
-Command/process tools (only `operator` / `full`):
+Command/process tools in `operator` and `full`:
 
-- `exec_command`, `write_stdin`, `read_process`, `terminate_process`, `list_processes`
+- `exec_command`
+- `write_stdin`, `read_process`, `terminate_process`, `list_processes`
 
-The deliberately small surface avoids dedicated MCP tools for every host operation. In `full`, and within the explicit capabilities of `operator`, ordinary host operations can be performed through `exec_command`.
+CodeAct tools in `full` when `MCP_CODEACT_ENABLED=true`:
 
-## Quick start: safe workspace mode
+- `python_session_create`
+- `python_action`
+- `python_inspect`
+- `python_session_close`
+
+CodeAct keeps Python variables alive across calls and exposes `host.files`, `host.process`, and `host.system`. It is intentionally restricted to `full`: exposing unrestricted Python in `workspace` or `operator` would bypass those profiles.
+
+## Quick start
 
 ```bash
 git clone https://github.com/reezex0-ux/jeopsok.git
 cd jeopsok
-npm install
+npm ci
 npm run build
 
 mkdir -p "$HOME/jeopsok-workspace"
@@ -76,102 +79,89 @@ export JEOPSOK_PROFILE=workspace
 npm start
 ```
 
-With no `JEOPSOK_ALLOWED_ROOTS`, workspace mode automatically uses `MCP_DEFAULT_CWD` as its only root.
-
 Default endpoints:
 
 - MCP: `http://127.0.0.1:3000/mcp`
 - health: `http://127.0.0.1:3000/health`
 
-Example health fields:
+## Authentication
 
-```json
-{
-  "status": "ok",
-  "service": "jeopsok",
-  "version": "0.2.0",
-  "transportMode": "mcp-2026-stateless",
-  "protocolRevision": "2026-07-28",
-  "accessProfile": "workspace",
-  "filesystemRestricted": true,
-  "allowedRootCount": 1,
-  "commandExecutionEnabled": false,
-  "unrestrictedHostAccess": false
-}
-```
-
-Health reports the profile and root **count**, not the configured root paths.
-
-## Readonly
+### Static bearer token
 
 ```dotenv
-JEOPSOK_PROFILE=readonly
-MCP_DEFAULT_CWD=/srv/reference
-JEOPSOK_ALLOWED_ROOTS=/srv/reference
+MCP_AUTH_TOKEN=<long-random-secret>
+MCP_ALLOW_NO_AUTH=false
+MCP_OAUTH_ENABLED=false
 ```
 
-Only `list_directory`, `stat_path`, `read_file`, and `download_file` are exposed.
+### Built-in OAuth 2.1
 
-## Operator
-
-Use operator only when the agent needs specific command capabilities:
+For direct HTTPS deployments, Jeopsok can act as its own OAuth authorization server:
 
 ```dotenv
-JEOPSOK_PROFILE=operator
-MCP_DEFAULT_CWD=/srv/project
-JEOPSOK_ALLOWED_ROOTS=/srv/project
-JEOPSOK_ALLOWED_COMMANDS=git,node
-JEOPSOK_ALLOWED_ENV=CI,NODE_ENV
+MCP_PUBLIC_URL=https://mcp.example.com
+MCP_OAUTH_ENABLED=true
+MCP_OAUTH_APPROVAL_KEY=<separate-long-random-secret>
+MCP_OAUTH_ISSUER=https://mcp.example.com
+MCP_OAUTH_RESOURCE=https://mcp.example.com/mcp
+MCP_OAUTH_STATE_FILE=/var/lib/jeopsok/oauth-state.json
+MCP_AUTH_TOKEN=
 ```
 
-A command such as `git status` is permitted; an executable not on the list is rejected. Shell chaining/redirects/substitution are rejected before process creation.
+The OAuth implementation provides:
 
-An allowlisted executable can still be powerful. For example, allowing an interpreter effectively gives the agent whatever OS access that interpreter has.
+- RFC 9728 protected-resource metadata
+- RFC 8414 authorization-server metadata
+- Dynamic Client Registration
+- Authorization Code + PKCE (S256)
+- `mcp:tools` scope and resource audience validation
+- short-lived access tokens
+- rotating refresh tokens with replay detection
+- token revocation
+- persistent client/token state stored with restrictive file permissions
 
-## Full
+For OAuth-only deployments, leave `MCP_AUTH_TOKEN` empty so there is no permanent static bearer bypass.
 
-```dotenv
-JEOPSOK_PROFILE=full
-```
+### Upstream authentication
 
-`full` restores unrestricted command and filesystem behavior. It is an explicit opt-in and should be treated as remote shell-equivalent authority to the Jeopsok OS account.
-
-## Authentication and deployment
-
-Jeopsok supports a static bearer token, or no local auth when it is safely behind a trusted private tunnel/authentication gateway.
-
-For a private/local deployment:
+If a private tunnel or upstream gateway performs authentication, local checks can be disabled:
 
 ```dotenv
 MCP_HOST=127.0.0.1
 MCP_ALLOW_NO_AUTH=true
 MCP_AUTH_TOKEN=
-JEOPSOK_PROFILE=workspace
+MCP_OAUTH_ENABLED=false
 ```
 
-Never expose a no-auth listener directly to an untrusted network. For direct remote access, use HTTPS plus a trusted authentication layer or a client that supports the static bearer token.
+Do not expose that configuration directly to an untrusted network.
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [SECURITY.md](SECURITY.md).
+## CodeAct
 
-## Configuration
-
-Key permission settings:
+CodeAct is designed for loops, filtering, aggregation, generated code, retries, and multi-step local computation where repeated primitive MCP calls would be wasteful.
 
 ```dotenv
-JEOPSOK_PROFILE=workspace
-JEOPSOK_ALLOWED_ROOTS=/srv/project,/tmp/agent-share
-# operator only:
-# JEOPSOK_ALLOWED_COMMANDS=git,node
-# JEOPSOK_ALLOWED_ENV=CI,NODE_ENV
+JEOPSOK_PROFILE=full
+MCP_CODEACT_ENABLED=true
+MCP_CODEACT_MAX_SESSIONS=8
+MCP_CODEACT_INTERACTIVE_MAX_ACTIONS=24
+MCP_CODEACT_INTERACTIVE_MAX_EXECUTION_CALLS=32
 ```
 
-See [`.env.example`](.env.example) for transport/auth/limit settings.
+`runMode=auto` defaults to interactive and recognizes scheduled/automation/cron metadata or labels as unattended. Interactive sessions receive action/process-call budgets. Unattended sessions are exempt from those interactive limits. Session metadata is checkpointed after actions, but Python memory itself is process-local and is lost when the worker or Jeopsok restarts.
 
-## Protocol
+CodeAct is not a sandbox. A `full` CodeAct worker has the same host authority as the Jeopsok process.
 
-Jeopsok uses `@modelcontextprotocol/server` v2. Modern HTTP uses MCP `2026-07-28`, including `server/discover` negotiation and per-request protocol/client metadata. The same endpoint retains the SDK's stateless legacy fallback for 2025-era clients.
+## Transport and workload state
 
-See [docs/PROTOCOL.md](docs/PROTOCOL.md).
+Jeopsok is stateless at the MCP transport layer. Requests do not depend on a long-lived MCP protocol session.
+
+Long-running command state is addressed explicitly with process `sessionId` handles. CodeAct uses separate Python-session handles. Both are workload state, not MCP transport sessions, and in-memory state is lost on service restart.
+
+## Observability
+
+Every MCP response receives an `X-Request-Id`. Jeopsok logs structured request records containing the RPC method, tool name, HTTP status, outcome, and duration without logging tool arguments or credentials.
+
+The health endpoint reports profile, authentication mode, active requests, managed processes, CodeAct availability/session count, and OAuth status without exposing configured filesystem root paths.
 
 ## Development
 
@@ -182,21 +172,12 @@ npm test
 npm run build
 ```
 
-## Project layout
+See:
 
-```text
-src/
-  access-policy.ts   permission profiles, root/symlink checks, operator allowlist
-  http-server.ts     stateless HTTP entry + legacy fallback
-  stdio-server.ts    optional stdio entry
-  mcp-server.ts      profile-aware tool registration
-  exec-tools.ts      command/process tools
-  process-manager.ts retained process handles/output
-  file-tools.ts      profile-aware filesystem tools
-  file-service.ts    filesystem implementation + root enforcement
-docs/                usage, deployment, protocol notes
-deploy/              systemd + Nginx examples
-```
+- [Usage](docs/USAGE.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [Protocol](docs/PROTOCOL.md)
+- [Security model](SECURITY.md)
 
 ## Origin and license
 

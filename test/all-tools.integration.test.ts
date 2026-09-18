@@ -8,7 +8,7 @@ import { loadConfig } from "../src/config.js";
 import { startHttpServer, type RunningHttpServer } from "../src/http-server.js";
 import { createServices } from "../src/mcp-server.js";
 
-describe("full-profile 13-tool surface", () => {
+describe("full-profile 17-tool surface", () => {
   let root:string; let running:RunningHttpServer; let client:Client;
   beforeAll(async()=>{
     root=await mkdtemp(path.join(os.tmpdir(),"jeopsok-tools-"));
@@ -21,7 +21,11 @@ describe("full-profile 13-tool surface", () => {
   afterAll(async()=>{await client?.close();await running?.close();await rm(root,{recursive:true,force:true});});
   const ok=async(name:string,args:Record<string,unknown>={})=>{const r=await client.callTool({name,arguments:args});expect(r.isError,JSON.stringify(r.structuredContent)).not.toBe(true);return (r.structuredContent??{}) as Record<string,unknown>;};
 
-  it("exercises command/process and file primitives", async()=>{
+  it("exercises command/process, file, and CodeAct primitives", async()=>{
+    const tools=(await client.listTools()).tools.map(tool=>tool.name);
+    expect(tools).toHaveLength(17);
+    expect(tools).toEqual(expect.arrayContaining(["python_session_create","python_action","python_inspect","python_session_close"]));
+
     const command=await ok("exec_command",{cmd:"printf core-ok",yieldTimeMs:3000}); expect(command).toMatchObject({stdout:"core-ok",exitCode:0});
     await ok("write_file",{path:"note.txt",content:"alpha\nbeta\n"});
     expect(await ok("stat_path",{path:"note.txt"})).toMatchObject({type:"file"});
@@ -40,5 +44,11 @@ describe("full-profile 13-tool surface", () => {
     const sleeper=await ok("exec_command",{cmd:"sleep 30",yieldTimeMs:0});
     expect(await ok("terminate_process",{sessionId:String(sleeper.sessionId),signal:"SIGTERM",graceMs:500})).toMatchObject({running:false});
     await ok("remove_path",{path:"note.txt"});
+
+    const py=await ok("python_session_create",{label:"integration"});
+    const pyid=String(py.sessionId);
+    expect(await ok("python_action",{sessionId:pyid,code:"x = 40\nx + 2"})).toMatchObject({ok:true,result:"42"});
+    expect(await ok("python_inspect",{sessionId:pyid,expression:"x"})).toMatchObject({ok:true,result:"40"});
+    expect(await ok("python_session_close",{sessionId:pyid})).toMatchObject({closed:true});
   });
 });

@@ -31,6 +31,26 @@ describe("config", () => {
     expect(operator).toMatchObject({ accessProfile: "operator", allowedCommands: ["git", "npm"], allowedEnv: ["CI", "NODE_ENV"] });
   });
 
+  it("allows OAuth without a static bearer token", () => {
+    const config = loadConfig({
+      MCP_OAUTH_ENABLED: "true",
+      MCP_OAUTH_APPROVAL_KEY: "approval-secret",
+      MCP_PUBLIC_URL: "https://mcp.example.com",
+    }, "/tmp");
+    expect(config).toMatchObject({
+      oauthEnabled: true,
+      oauthIssuerUrl: "https://mcp.example.com/",
+      oauthResourceUrl: "https://mcp.example.com/mcp",
+    });
+  });
+
+  it("keeps CodeAct configurable without weakening the workspace default", () => {
+    const workspace = loadConfig({ MCP_AUTH_TOKEN: "x" }, "/tmp");
+    expect(workspace).toMatchObject({ accessProfile: "workspace", codeActEnabled: true });
+    const full = loadConfig({ MCP_AUTH_TOKEN: "x", JEOPSOK_PROFILE: "full" }, "/tmp");
+    expect(full).toMatchObject({ accessProfile: "full", codeActEnabled: true });
+  });
+
   it("allows a trusted local tunnel configuration", () => {
     const config = loadConfig({ MCP_ALLOW_NO_AUTH: "true", MCP_HOST: "127.0.0.1" }, "/tmp");
     expect(config).toMatchObject({ allowNoAuth: true, host: "127.0.0.1", port: 3000, endpoint: "/mcp" });

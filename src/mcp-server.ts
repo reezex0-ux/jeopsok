@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/server";
 
 import { AccessPolicy } from "./access-policy.js";
+import { CodeActManager } from "./codeact.js";
+import { registerCodeActTools } from "./codeact-tools.js";
 import type { AppConfig } from "./config.js";
 import { registerExecTools } from "./exec-tools.js";
 import { FileService } from "./file-service.js";
@@ -11,6 +13,7 @@ export interface McpServices {
   processManager: ProcessManager;
   fileService: FileService;
   accessPolicy: AccessPolicy;
+  codeActManager: CodeActManager | undefined;
 }
 
 export function createServices(config: AppConfig): McpServices {
@@ -21,6 +24,7 @@ export function createServices(config: AppConfig): McpServices {
     allowedCommands: config.allowedCommands,
     allowedEnv: config.allowedEnv,
   });
+
   return {
     accessPolicy,
     processManager: new ProcessManager({
@@ -36,26 +40,48 @@ export function createServices(config: AppConfig): McpServices {
       maxOutputBytes: config.maxOutputBytes,
       accessPolicy,
     }),
+    codeActManager:
+      config.codeActEnabled && config.accessProfile === "full"
+        ? new CodeActManager({
+            pythonExecutable: config.codeActPython,
+            defaultCwd: config.defaultCwd,
+            logFile: config.codeActLogFile,
+            maxSessions: config.codeActMaxSessions,
+            sessionRetentionMs: config.codeActSessionRetentionMs,
+            runStateDir: config.codeActRunStateDir,
+            interactiveMaxActions: config.codeActInteractiveMaxActions,
+            interactiveMaxExecutionCalls: config.codeActInteractiveMaxExecutionCalls,
+          })
+        : undefined,
   };
 }
 
-function instructionsFor(config: AppConfig): string {
+function instructionsFor(config: AppConfig, codeActEnabled: boolean): string {
   switch (config.accessProfile) {
     case "readonly":
       return "Jeopsok is in readonly mode. Only file metadata/read/download tools within configured roots are available.";
     case "workspace":
-      return "Jeopsok is in workspace mode. File tools are restricted to configured roots; command execution is not exposed.";
+      return "Jeopsok is in workspace mode. File tools are restricted to configured roots; command execution and CodeAct are not exposed.";
     case "operator":
-      return "Jeopsok is in operator mode. File tools are restricted to configured roots and command execution is limited by JEOPSOK_ALLOWED_COMMANDS. Command capabilities may still reach outside filesystem roots depending on the allowed executable.";
+      return "Jeopsok is in operator mode. File tools are restricted to configured roots and command execution is limited by JEOPSOK_ALLOWED_COMMANDS. CodeAct is not exposed because unrestricted Python would bypass the operator boundary.";
     case "full":
-      return "Jeopsok is in full mode. Command, process, and filesystem tools run with the operating-system permissions of the Jeopsok process.";
+      return codeActEnabled
+        ? "Jeopsok is in full mode. Command, process, filesystem, and persistent CodeAct Python tools run with the operating-system permissions of the Jeopsok process."
+        : "Jeopsok is in full mode. Command, process, and filesystem tools run with the operating-system permissions of the Jeopsok process.";
   }
 }
 
 export function createMcpServer(config: AppConfig, services: McpServices): McpServer {
   const server = new McpServer(
-    { name: "jeopsok", version: "0.2.0", ...(config.publicUrl ? { websiteUrl: config.publicUrl } : {}) },
-    { instructions: instructionsFor(config), capabilities: { logging: {} } },
+    {
+      name: "jeopsok",
+      version: "0.3.0",
+      ...(config.publicUrl ? { websiteUrl: config.publicUrl } : {}),
+    },
+    {
+      instructions: instructionsFor(config, services.codeActManager !== undefined),
+      capabilities: { logging: {} },
+    },
   );
 
   if (services.accessPolicy.commandExecutionEnabled) {
@@ -67,6 +93,12 @@ export function createMcpServer(config: AppConfig, services: McpServices): McpSe
       services.accessPolicy,
     );
   }
+
   registerFileTools(server, config, services.fileService);
+
+  if (services.codeActManager) {
+    registerCodeActTools(server, services.codeActManager);
+  }
+
   return server;
 }
