@@ -63,7 +63,7 @@ describe("access profiles", () => {
       JEOPSOK_ALLOWED_ENV: "CI",
     });
     try {
-      expect((await client.listTools()).tools).toHaveLength(17);
+      expect((await client.listTools()).tools).toHaveLength(13);
       const allowed = await call(client, "exec_command", { cmd: "printf operator-ok", yieldTimeMs: 3000 });
       expect(allowed.structuredContent).toMatchObject({ stdout: "operator-ok", exitCode: 0 });
       expect((await call(client, "exec_command", { cmd: "uname -a" })).isError).toBe(true);
@@ -86,7 +86,7 @@ describe("access profiles", () => {
     const outside = await mkdtemp(path.join(os.tmpdir(), "jeopsok-full-outside-")); roots.push(outside);
     await writeFile(path.join(outside, "visible.txt"), "full-ok");
     try {
-      expect((await client.listTools()).tools).toHaveLength(13);
+      expect((await client.listTools()).tools).toHaveLength(17);
       const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
       expect(toolNames).toEqual(expect.arrayContaining(["python_session_create", "python_action", "python_inspect", "python_session_close"]));
       const read = await call(client, "read_file", { path: path.join(outside, "visible.txt") });
