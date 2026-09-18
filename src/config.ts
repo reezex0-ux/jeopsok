@@ -99,6 +99,19 @@ export function isLoopbackHost(host: string): boolean {
   return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
 
+export function assertSafeHttpConfig(config: Pick<AppConfig, "host" | "trustProxyHops" | "allowNoAuth" | "authToken" | "oauthEnabled">): void {
+  if (config.allowNoAuth && !config.authToken && !config.oauthEnabled && !isLoopbackHost(config.host)) {
+    throw new Error(
+      "MCP_ALLOW_NO_AUTH=true is allowed only with a loopback MCP_HOST. Bind to 127.0.0.1/::1/localhost behind the trusted upstream, or enable bearer/OAuth authentication.",
+    );
+  }
+  if (config.trustProxyHops > 0 && !isLoopbackHost(config.host)) {
+    throw new Error(
+      "MCP_TRUST_PROXY_HOPS>0 requires a loopback MCP_HOST so clients cannot bypass the trusted reverse proxy and spoof forwarded addresses.",
+    );
+  }
+}
+
 function normalizeEndpoint(value: string | undefined): string {
   const endpoint = value?.trim() || "/mcp";
   if (!endpoint.startsWith("/")) throw new Error("MCP_ENDPOINT must start with '/'");
@@ -148,17 +161,6 @@ export function loadConfig(
       "MCP_OAUTH_APPROVAL_KEY (or MCP_AUTH_TOKEN for backward compatibility) is required when OAuth is enabled",
     );
   }
-  if (allowNoAuth && !authToken && !oauthEnabled && !isLoopbackHost(host)) {
-    throw new Error(
-      "MCP_ALLOW_NO_AUTH=true is allowed only with a loopback MCP_HOST. Bind to 127.0.0.1/::1/localhost behind the trusted upstream, or enable bearer/OAuth authentication.",
-    );
-  }
-  if (trustProxyHops > 0 && !isLoopbackHost(host)) {
-    throw new Error(
-      "MCP_TRUST_PROXY_HOPS>0 requires a loopback MCP_HOST so clients cannot bypass the trusted reverse proxy and spoof forwarded addresses.",
-    );
-  }
-
   const rawDefaultCwd = path.resolve(env.MCP_DEFAULT_CWD?.trim() || processCwd);
   const defaultCwd = normalizeAllowedRoots([rawDefaultCwd], rawDefaultCwd)[0]!;
   const accessProfile = parseProfile(env.JEOPSOK_PROFILE);
