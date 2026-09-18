@@ -51,7 +51,7 @@ describe("Jeopsok MCP server", () => {
   it("serves MCP 2026-07-28 with safe workspace tools by default", async () => {
     const client = await connect();
     try {
-      expect(client.getServerVersion()).toMatchObject({ name: "jeopsok", version: "0.2.0" });
+      expect(client.getServerVersion()).toMatchObject({ name: "jeopsok", version: "0.3.0" });
       expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual([...WORKSPACE_TOOLS].sort());
       const write = await client.callTool({ name: "write_file", arguments: { path: "inside.txt", content: "ok" } });
       expect(write.isError).not.toBe(true);
@@ -71,10 +71,10 @@ describe("Jeopsok MCP server", () => {
     const health = await fetch(new URL("/health", endpoint));
     const body = await health.json() as Record<string, unknown>;
     expect(body).toMatchObject({
-      service: "jeopsok", version: "0.2.0", transportMode: "mcp-2026-stateless",
+      service: "jeopsok", version: "0.3.0", transportMode: "mcp-2026-stateless",
       protocolRevision: "2026-07-28", activeMcpSessions: 0,
       accessProfile: "workspace", filesystemRestricted: true,
-      allowedRootCount: 1, commandExecutionEnabled: false, unrestrictedHostAccess: false,
+      allowedRootCount: 1, commandExecutionEnabled: false, unrestrictedHostAccess: false, codeActEnabled: false, oauthEnabled: false,
     });
     expect(JSON.stringify(body)).not.toContain(temporaryDirectory);
   });
