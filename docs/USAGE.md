@@ -58,13 +58,13 @@ len(rows)
 
 A later `python_inspect` can inspect `len(rows)` or `rows[:5]` without resending the data.
 
-`runMode=auto` resolves to interactive unless runtime metadata, environment, or the session label indicates scheduled/automation work. Interactive sessions have configurable action and process-call budgets; unattended sessions do not use those interactive limits.
+`runMode=auto` resolves to interactive. Client labels and request metadata never remove budgets. Only server-owned `MCP_RUN_MODE=unattended` may create unattended sessions.
 
 Checkpoints contain session metadata and counters, not a serialization of live Python variables. Restarting the worker loses in-memory Python state.
 
 ## Authentication
 
-Static bearer authentication works with clients that can send an Authorization header. Built-in OAuth supports DCR + Authorization Code/PKCE and the `mcp:tools` scope. OAuth-only deployments should normally leave `MCP_AUTH_TOKEN` empty.
+Static bearer authentication works with clients that can send an Authorization header. External OAuth mode verifies signed JWT access tokens from a dedicated Authorization Server / IdP. Jeopsok publishes RFC 9728 protected-resource metadata but does not run DCR, authorization, token, refresh, or revocation endpoints. OAuth-only deployments should normally leave `MCP_AUTH_TOKEN` empty.
 
 See [Deployment](DEPLOYMENT.md) for configuration examples.
 

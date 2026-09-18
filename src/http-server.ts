@@ -2,69 +2,22 @@ import { randomUUID } from "node:crypto";
 import type { Server as HttpServer } from "node:http";
 
 import { createMcpHandler } from "@modelcontextprotocol/server";
-import {
-  createOAuthMetadata,
-  mcpAuthRouter,
-  type AuthRouterOptions,
-} from "@modelcontextprotocol/server-legacy/auth";
 import { toNodeHandler } from "@modelcontextprotocol/node";
-import express, { type Request, type RequestHandler, type Response } from "express";
+import express, { type Request, type Response } from "express";
 
-import { createBearerAuth, createHostValidation } from "./auth.js";
+import {
+  createBearerAuth,
+  createHostValidation,
+  createOAuthTokenVerifier,
+  oauthResourceMetadataUrl,
+} from "./auth.js";
 import { assertSafeHttpConfig, type AppConfig } from "./config.js";
 import { errorMessage } from "./errors.js";
 import { createMcpServer, type McpServices } from "./mcp-server.js";
-import { JeopsokOAuthProvider, OAUTH_SCOPES } from "./oauth.js";
 
 export interface RunningHttpServer {
   httpServer: HttpServer;
   close: () => Promise<void>;
-}
-
-function createSocketRateLimiter(
-  paths: ReadonlySet<string>,
-  windowMs: number,
-  limit: number,
-): RequestHandler {
-  const buckets = new Map<string, { count: number; resetAt: number }>();
-
-  return (request, response, next) => {
-    if (!paths.has(request.path)) {
-      next();
-      return;
-    }
-
-    const now = Date.now();
-    if (buckets.size > 4096) {
-      for (const [key, bucket] of buckets) {
-        if (bucket.resetAt <= now) buckets.delete(key);
-      }
-    }
-
-    const remoteAddress = request.socket.remoteAddress || "unknown";
-    const key = `${remoteAddress}\n${request.path}`;
-    const current = buckets.get(key);
-    const bucket =
-      !current || current.resetAt <= now
-        ? { count: 0, resetAt: now + windowMs }
-        : current;
-
-    bucket.count += 1;
-    buckets.set(key, bucket);
-
-    if (bucket.count > limit) {
-      response
-        .status(429)
-        .set("Retry-After", String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))))
-        .json({
-          error: "too_many_requests",
-          error_description: "OAuth endpoint rate limit exceeded",
-        });
-      return;
-    }
-
-    next();
-  };
 }
 
 function rpcMethod(request: Request): string | undefined {
@@ -98,59 +51,35 @@ export async function startHttpServer(
   app.use(createHostValidation(config));
 
   let activeMcpRequests = 0;
-  const oauthProvider = config.oauthEnabled ? new JeopsokOAuthProvider(config) : undefined;
+  const oauthVerifier = createOAuthTokenVerifier(config);
 
-  if (oauthProvider) {
-    app.get("/.well-known/oauth-protected-resource", (_request, response) => {
-      response.set("Access-Control-Allow-Origin", "*").json({
-        resource: oauthProvider.resourceUrl.href,
-        authorization_servers: [oauthProvider.issuerUrl.href],
-        scopes_supported: [...OAUTH_SCOPES],
-        bearer_methods_supported: ["header"],
-        resource_name: "jeopsok",
-      });
-    });
-
-    const oauthRouterOptions = {
-      provider: oauthProvider,
-      issuerUrl: oauthProvider.issuerUrl,
-      resourceServerUrl: oauthProvider.resourceUrl,
-      scopesSupported: [...OAUTH_SCOPES],
-      resourceName: "jeopsok",
-      // The legacy SDK's default limiters key off Express client IP, which can
-      // depend on X-Forwarded-For when trust proxy is enabled. Jeopsok instead
-      // rate-limits these endpoints by the TCP peer address below.
-      authorizationOptions: { rateLimit: false },
-      clientRegistrationOptions: { rateLimit: false },
-      tokenOptions: { rateLimit: false },
-    } satisfies AuthRouterOptions;
-
-    const oauthMetadata = {
-      ...createOAuthMetadata(oauthRouterOptions),
-      revocation_endpoint_auth_methods_supported: ["client_secret_post", "none"],
+  if (config.oauthEnabled && config.oauthResourceUrl && config.oauthIssuerUrl) {
+    const metadata = {
+      resource: config.oauthResourceUrl,
+      authorization_servers: [config.oauthIssuerUrl],
+      scopes_supported: config.oauthRequiredScopes,
+      bearer_methods_supported: ["header"],
+      resource_name: "jeopsok",
     };
+    const pathAwareMetadataPath = new URL(oauthResourceMetadataUrl(config)).pathname;
+    const metadataPaths = new Set([
+      "/.well-known/oauth-protected-resource",
+      pathAwareMetadataPath,
+    ]);
 
-    const issuerPath = oauthProvider.issuerUrl.pathname.replace(/\/$/, "");
-    const oauthMetadataPath = `/.well-known/oauth-authorization-server${issuerPath}`;
     app.use((request, response, next) => {
       if (
         (request.method === "GET" || request.method === "HEAD") &&
-        request.path === oauthMetadataPath
+        metadataPaths.has(request.path)
       ) {
-        response.set("Access-Control-Allow-Origin", "*").json(oauthMetadata);
+        response
+          .set("Access-Control-Allow-Origin", "*")
+          .set("Cache-Control", "public, max-age=300")
+          .json(metadata);
         return;
       }
       next();
     });
-
-    app.use(
-      createSocketRateLimiter(
-        new Set(["/register", "/authorize", "/token"]),
-        config.oauthRateLimitWindowMs,
-        config.oauthRateLimitMaxRequests,
-      ),
-    );
-    app.use(mcpAuthRouter(oauthRouterOptions));
   }
 
   const mcpHandler = createMcpHandler(
@@ -164,14 +93,14 @@ export async function startHttpServer(
     onerror: (error) => console.error("MCP Node adapter error:", errorMessage(error)),
   });
 
-  const authenticate = createBearerAuth(config, oauthProvider);
+  const authenticate = createBearerAuth(config, oauthVerifier);
   const parseMcpJson = express.json({ limit: config.maxRequestBody });
 
   app.get("/health", (_request, response) => {
     response.json({
       status: "ok",
       service: "jeopsok",
-      version: "0.3.1",
+      version: "0.4.0",
       transportMode: "mcp-2026-stateless",
       protocolRevision: "2026-07-28",
       legacyStatelessFallback: true,
@@ -192,11 +121,12 @@ export async function startHttpServer(
       codeActEnabled: services.codeActManager !== undefined,
       codeActSessions: services.codeActManager?.list().length ?? 0,
       oauthEnabled: config.oauthEnabled,
+      oauthMode: config.oauthEnabled ? "external-resource-server" : "disabled",
       authentication:
         config.allowNoAuth && !config.authToken && !config.oauthEnabled
           ? "upstream-or-none"
           : config.oauthEnabled
-            ? config.authToken ? "bearer+oauth" : "oauth"
+            ? config.authToken ? "bearer+external-oauth" : "external-oauth"
             : "bearer",
     });
   });

@@ -1,30 +1,36 @@
 # 접속 — Jeopsok
 
-**Jeopsok (접속)** is a safe-by-default remote agent runtime for MCP clients. It combines a small stateless MCP tool surface with explicit workload handles, permission profiles, built-in OAuth 2.1, and optional persistent Python CodeAct sessions.
+**Jeopsok (접속)** is a safe-by-default remote agent runtime for MCP clients. It combines a small stateless MCP tool surface with explicit workload handles, permission profiles, external OAuth resource-server authentication, and optional persistent Python CodeAct sessions.
 
 Jeopsok targets MCP `2026-07-28` over Streamable HTTP while retaining the SDK's stateless compatibility path for older clients.
 
-## v0.3.1 security hardening
+## v0.4 highlights
 
+- Removed `@modelcontextprotocol/server-legacy`
+- Jeopsok no longer acts as an OAuth Authorization Server
+- External OAuth access tokens are verified as JWTs with issuer, audience, expiry, JWKS signature, and required scopes
+- RFC 9728 protected-resource metadata points clients to the external Authorization Server
+- `/register`, `/authorize`, `/token`, and `/revoke` are no longer exposed by Jeopsok
+- Static Bearer authentication remains available for simple/private deployments
 - Safe permission profiles remain the default: `readonly`, `workspace`, `operator`, `full`
 - No-auth HTTP serving fails closed unless `MCP_HOST` is loopback
-- Trust-proxy mode is accepted only behind a loopback listener; OAuth endpoint rate limits use the TCP peer address rather than X-Forwarded-For
 - CodeAct unattended mode can be enabled only by server-owned `MCP_RUN_MODE=unattended`
-- Dynamic OAuth client registrations are pruned and bounded
-- Built-in OAuth 2.1 authorization server with DCR, Authorization Code + PKCE (S256), refresh rotation, revocation, and protected-resource metadata
-- Persistent CodeAct Python sessions for multi-step work without repeated MCP round trips
-- Interactive vs. unattended CodeAct run modes with configurable budgets and checkpoints
-- Structured MCP request logs and `X-Request-Id` tracing
-- Linux and native Windows command execution
+- Persistent CodeAct Python sessions, request tracing, native Windows execution, and process handles remain available
+
+The MCP TypeScript SDK v2 recommends new servers act as OAuth resource servers and use a dedicated identity provider for authorization-server duties. Jeopsok v0.4 follows that model.
 
 ```text
 MCP client
    |
-   | HTTPS / Streamable HTTP
+   | obtains token from external Authorization Server / IdP
+   v
+external IdP
+   |
+   | signed JWT access token
    v
 Jeopsok
    |
-   +-- authentication: bearer and/or OAuth 2.1
+   +-- verify issuer / audience / JWKS / expiry / scopes
    +-- permission profile
    +-- explicit process handles
    +-- filesystem policy
@@ -40,7 +46,7 @@ Jeopsok
 | `operator` | workspace-restricted | allowlisted executables | disabled |
 | `full` | unrestricted | unrestricted | optional |
 
-Profiles change the actual MCP tool catalog. Tools that are outside the selected capability boundary are not registered.
+Profiles change the actual MCP tool catalog. Tools outside the selected capability boundary are not registered.
 
 For `readonly`, `workspace`, and `operator`, `JEOPSOK_ALLOWED_ROOTS` is enforced against normalized paths and resolved symlink targets. If omitted, it defaults to `MCP_DEFAULT_CWD`.
 
@@ -65,7 +71,7 @@ CodeAct tools in `full` when `MCP_CODEACT_ENABLED=true`:
 - `python_inspect`
 - `python_session_close`
 
-CodeAct keeps Python variables alive across calls and exposes `host.files`, `host.process`, and `host.system`. It is intentionally restricted to `full`: exposing unrestricted Python in `workspace` or `operator` would bypass those profiles.
+CodeAct keeps Python variables alive across calls and exposes `host.files`, `host.process`, and `host.system`. It is intentionally restricted to `full`: unrestricted Python would bypass the narrower profiles.
 
 ## Quick start
 
@@ -92,43 +98,52 @@ Default endpoints:
 
 ### Static bearer token
 
+Use this for private networks or clients that can provide a fixed Bearer token:
+
 ```dotenv
 MCP_AUTH_TOKEN=<long-random-secret>
 MCP_ALLOW_NO_AUTH=false
 MCP_OAUTH_ENABLED=false
 ```
 
-### Built-in OAuth 2.1
+### External OAuth Resource Server
 
-For direct HTTPS deployments, Jeopsok can act as its own OAuth authorization server:
+Jeopsok v0.4 does **not** issue OAuth tokens. Configure an external Authorization Server / IdP that owns login, consent, DCR if needed, PKCE, refresh tokens, revocation, and token issuance.
+
+Jeopsok verifies JWT access tokens with a remote JWKS:
 
 ```dotenv
 MCP_PUBLIC_URL=https://mcp.example.com
-MCP_OAUTH_ENABLED=true
-MCP_OAUTH_APPROVAL_KEY=<separate-long-random-secret>
-MCP_OAUTH_ISSUER=https://mcp.example.com
-MCP_OAUTH_RESOURCE=https://mcp.example.com/mcp
-MCP_OAUTH_STATE_FILE=/var/lib/jeopsok/oauth-state.json
 MCP_AUTH_TOKEN=
+MCP_ALLOW_NO_AUTH=false
+
+MCP_OAUTH_ENABLED=true
+MCP_OAUTH_ISSUER=https://idp.example.com/
+MCP_OAUTH_JWKS_URL=https://idp.example.com/.well-known/jwks.json
+MCP_OAUTH_RESOURCE=https://mcp.example.com/mcp
+MCP_OAUTH_AUDIENCE=https://mcp.example.com/mcp
+MCP_OAUTH_REQUIRED_SCOPES=mcp:tools
 ```
 
-The OAuth implementation provides:
+Validation includes:
 
-- RFC 9728 protected-resource metadata
-- RFC 8414 authorization-server metadata
-- Dynamic Client Registration
-- Authorization Code + PKCE (S256)
-- `mcp:tools` scope and resource audience validation
-- short-lived access tokens
-- rotating refresh tokens with replay detection
-- token revocation
-- persistent client/token state stored with restrictive file permissions
+- JWT signature against `MCP_OAUTH_JWKS_URL`
+- exact issuer match against `MCP_OAUTH_ISSUER`
+- audience match against `MCP_OAUTH_AUDIENCE`
+- token expiration
+- client identity from `client_id`, `azp`, or `sub`
+- all scopes listed in `MCP_OAUTH_REQUIRED_SCOPES`
 
-For OAuth-only deployments, leave `MCP_AUTH_TOKEN` empty so there is no permanent static bearer bypass.
+Jeopsok serves RFC 9728 protected-resource metadata at:
+
+- `/.well-known/oauth-protected-resource`
+- `/.well-known/oauth-protected-resource/mcp` for the default endpoint
+
+The metadata advertises the external issuer. The issuer must provide the authorization-server behavior required by your MCP client. For ChatGPT or other clients that rely on dynamic registration, configure an external IdP that supports the required flow.
 
 ### Upstream authentication
 
-If a private tunnel or upstream gateway performs authentication, local checks can be disabled:
+If a private tunnel or upstream gateway is the actual authentication boundary, local checks can be disabled:
 
 ```dotenv
 MCP_HOST=127.0.0.1
@@ -137,7 +152,7 @@ MCP_AUTH_TOKEN=
 MCP_OAUTH_ENABLED=false
 ```
 
-Jeopsok enforces this posture: unauthenticated HTTP mode is accepted only when `MCP_HOST` is loopback. Do not expose that configuration directly to an untrusted network.
+Jeopsok rejects unauthenticated HTTP mode on non-loopback listeners.
 
 ## CodeAct
 
@@ -151,7 +166,9 @@ MCP_CODEACT_INTERACTIVE_MAX_ACTIONS=24
 MCP_CODEACT_INTERACTIVE_MAX_EXECUTION_CALLS=32
 ```
 
-`runMode=auto` defaults to interactive. Client-provided labels, request metadata, and `runMode=unattended` cannot remove interactive budgets. Only server-owned `MCP_RUN_MODE=unattended` may create unattended sessions. Session metadata is checkpointed after actions, but Python memory itself is process-local and is lost when the worker or Jeopsok restarts.
+`runMode=auto` defaults to interactive. Client-provided labels, request metadata, and `runMode=unattended` cannot remove interactive budgets. Only server-owned `MCP_RUN_MODE=unattended` may create unattended sessions.
+
+Session metadata is checkpointed after actions, but Python memory itself is process-local and is lost when the worker or Jeopsok restarts.
 
 CodeAct is not a sandbox. A `full` CodeAct worker has the same host authority as the Jeopsok process.
 
@@ -165,7 +182,7 @@ Long-running command state is addressed explicitly with process `sessionId` hand
 
 Every MCP response receives an `X-Request-Id`. Jeopsok logs structured request records containing the RPC method, tool name, HTTP status, outcome, and duration without logging tool arguments or credentials.
 
-The health endpoint reports profile, authentication mode, active requests, managed processes, CodeAct availability/session count, and OAuth status without exposing configured filesystem root paths.
+The health endpoint reports profile, authentication mode, active requests, managed processes, CodeAct availability/session count, and OAuth resource-server status without exposing configured filesystem root paths.
 
 ## Development
 

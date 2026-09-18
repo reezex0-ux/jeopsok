@@ -17,9 +17,9 @@ JEOPSOK_ALLOWED_ROOTS=/srv/jeopsok-workspace
 
 Point a trusted private tunnel or authentication gateway at `http://127.0.0.1:3000/mcp`.
 
-## Direct HTTPS + OAuth
+## Direct HTTPS + external OAuth
 
-For an internet-reachable MCP endpoint, keep Jeopsok behind TLS and enable the built-in OAuth server:
+Jeopsok v0.4 acts only as an OAuth Resource Server. Use a dedicated Authorization Server / IdP for login, DCR if required, PKCE, token issuance, refresh, and revocation.
 
 ```dotenv
 MCP_HOST=127.0.0.1
@@ -29,20 +29,24 @@ MCP_TRUST_PROXY_HOPS=1
 
 MCP_AUTH_TOKEN=
 MCP_ALLOW_NO_AUTH=false
+
 MCP_OAUTH_ENABLED=true
-MCP_OAUTH_APPROVAL_KEY=<long-random-secret>
-MCP_OAUTH_ISSUER=https://mcp.example.com
+MCP_OAUTH_ISSUER=https://idp.example.com/
+MCP_OAUTH_JWKS_URL=https://idp.example.com/.well-known/jwks.json
 MCP_OAUTH_RESOURCE=https://mcp.example.com/mcp
-MCP_OAUTH_STATE_FILE=/var/lib/jeopsok/oauth-state.json
+MCP_OAUTH_AUDIENCE=https://mcp.example.com/mcp
+MCP_OAUTH_REQUIRED_SCOPES=mcp:tools
 
 JEOPSOK_PROFILE=workspace
 MCP_DEFAULT_CWD=/srv/jeopsok-workspace
 JEOPSOK_ALLOWED_ROOTS=/srv/jeopsok-workspace
 ```
 
-The OAuth implementation supports Dynamic Client Registration, Authorization Code + PKCE (S256), refresh-token rotation/replay detection, revocation, and protected-resource metadata.
+Jeopsok publishes protected-resource metadata pointing clients to `MCP_OAUTH_ISSUER`. The external issuer must provide the authorization-server flow your client expects.
 
-Set `MCP_TRUST_PROXY_HOPS=1` only when exactly one trusted reverse proxy sits in front of Jeopsok. Do not reuse that value for direct listeners or different proxy topologies.
+For clients that use Dynamic Client Registration, choose/configure an IdP that supports the required DCR behavior. Jeopsok no longer has `/register`, `/authorize`, `/token`, or `/revoke` endpoints.
+
+Set `MCP_TRUST_PROXY_HOPS=1` only when exactly one trusted reverse proxy is in front of a loopback-bound Jeopsok listener.
 
 ## Choosing a permission profile
 
@@ -69,6 +73,8 @@ MCP_CODEACT_INTERACTIVE_MAX_ACTIONS=24
 MCP_CODEACT_INTERACTIVE_MAX_EXECUTION_CALLS=32
 MCP_CODEACT_LOG_FILE=/var/lib/jeopsok/codeact-actions.jsonl
 MCP_CODEACT_RUN_STATE_DIR=/var/lib/jeopsok/runs
+# Only set on an unattended worker:
+# MCP_RUN_MODE=unattended
 ```
 
 Use a dedicated worker, VM, or container when granting this level of access.

@@ -31,17 +31,28 @@ describe("config", () => {
     expect(operator).toMatchObject({ accessProfile: "operator", allowedCommands: ["git", "npm"], allowedEnv: ["CI", "NODE_ENV"] });
   });
 
-  it("allows OAuth without a static bearer token", () => {
+  it("configures external OAuth resource-server verification without a static bearer token", () => {
     const config = loadConfig({
       MCP_OAUTH_ENABLED: "true",
-      MCP_OAUTH_APPROVAL_KEY: "approval-secret",
+      MCP_OAUTH_ISSUER: "https://idp.example.com/",
+      MCP_OAUTH_JWKS_URL: "https://idp.example.com/.well-known/jwks.json",
       MCP_PUBLIC_URL: "https://mcp.example.com",
     }, "/tmp");
     expect(config).toMatchObject({
       oauthEnabled: true,
-      oauthIssuerUrl: "https://mcp.example.com/",
+      oauthIssuerUrl: "https://idp.example.com/",
       oauthResourceUrl: "https://mcp.example.com/mcp",
+      oauthJwksUrl: "https://idp.example.com/.well-known/jwks.json",
+      oauthAudience: "https://mcp.example.com/mcp",
+      oauthRequiredScopes: ["mcp:tools"],
     });
+  });
+
+  it("requires issuer and JWKS when OAuth is enabled", () => {
+    expect(() => loadConfig({
+      MCP_OAUTH_ENABLED: "true",
+      MCP_PUBLIC_URL: "https://mcp.example.com",
+    }, "/tmp")).toThrow(/MCP_OAUTH_ISSUER/);
   });
 
   it("keeps CodeAct configurable without weakening the workspace default", () => {

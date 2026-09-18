@@ -1,6 +1,6 @@
 # Security model
 
-Jeopsok v0.3.1 is **safe by default, not a sandbox**. Permission profiles reduce the registered MCP capability surface, but the operating-system account remains the final host security boundary.
+Jeopsok v0.4 is **safe by default, not a sandbox**. Permission profiles reduce the registered MCP capability surface, but the operating-system account remains the final host security boundary.
 
 ## Permission profiles
 
@@ -15,21 +15,29 @@ For every profile except `full`, `JEOPSOK_ALLOWED_ROOTS` is enforced against nor
 
 `operator` is a command capability policy, not a filesystem sandbox. An allowed program may itself access arbitrary files, start subprocesses, load plugins, or execute scripts. Allowing interpreters, shells, package managers, container runtimes, or service managers may effectively grant broad host access.
 
-CodeAct is deliberately registered only in `full`. Persistent Python has broad language and process capabilities and would otherwise bypass the guarantees of `readonly`, `workspace`, or `operator`.
+CodeAct is deliberately registered only in `full`. Persistent Python has broad language and process capabilities and would otherwise bypass the narrower profiles.
 
 ## Authentication
 
-Jeopsok supports three deployment postures:
+Jeopsok supports three HTTP deployment postures:
 
 - static bearer authentication;
-- built-in OAuth 2.1 with DCR + Authorization Code/PKCE;
-- no local authentication only when an upstream private tunnel or gateway is the actual authentication boundary.
+- external OAuth resource-server authentication;
+- no local authentication only when a trusted upstream private tunnel or gateway is the actual authentication boundary.
 
-For OAuth deployments, prefer a dedicated `MCP_OAUTH_APPROVAL_KEY` and leave `MCP_AUTH_TOKEN` empty unless a static bearer fallback is intentionally required. OAuth state contains registered clients and hashed token records; keep `MCP_OAUTH_STATE_FILE` on private storage with restrictive permissions.
+Jeopsok v0.4 is **not** an OAuth Authorization Server. It does not expose DCR, authorization, token, refresh, or revocation endpoints. Those duties belong to a dedicated external Authorization Server / IdP.
 
-`MCP_ALLOW_NO_AUTH=true` is rejected for non-loopback HTTP listeners. `MCP_TRUST_PROXY_HOPS>0` is also rejected unless the listener is loopback, preventing direct clients from bypassing the intended proxy boundary. OAuth rate limits key on the TCP peer address and do not trust X-Forwarded-For.
+When OAuth is enabled, Jeopsok accepts JWT access tokens only after validating:
 
-Dynamic OAuth registrations are bounded by `MCP_OAUTH_MAX_CLIENTS`; old inactive clients are pruned after `MCP_OAUTH_CLIENT_RETENTION_SECONDS`.
+- signature against `MCP_OAUTH_JWKS_URL`;
+- exact issuer against `MCP_OAUTH_ISSUER`;
+- audience against `MCP_OAUTH_AUDIENCE`;
+- expiration;
+- required scopes from `MCP_OAUTH_REQUIRED_SCOPES`.
+
+The IdP must secure its own login, DCR/PKCE, token issuance, refresh, revocation, and registration lifecycle.
+
+`MCP_ALLOW_NO_AUTH=true` is rejected for non-loopback HTTP listeners. `MCP_TRUST_PROXY_HOPS>0` is also rejected unless the Jeopsok listener is loopback, preventing direct clients from bypassing the intended proxy boundary.
 
 CodeAct unattended mode is server-owned. Client labels, request metadata, and explicit tool arguments cannot enable it; only `MCP_RUN_MODE=unattended` in the server environment can remove interactive budgets.
 
@@ -39,8 +47,10 @@ CodeAct unattended mode is server-owned. Client labels, request metadata, and ex
 2. Run Jeopsok as a dedicated non-root OS user.
 3. Bind to `127.0.0.1` behind a trusted proxy/tunnel unless direct listening is intentional.
 4. Use HTTPS for every internet-facing deployment.
-5. Use `operator` with a small executable allowlist rather than `full` when possible.
-6. Use `full` and CodeAct only on a host, VM, or container where remote shell-equivalent authority is intentional.
-7. Keep OAuth state, CodeAct checkpoints/logs, tokens, and private keys out of public repositories and bug reports.
+5. Use a mature external IdP for public OAuth rather than embedding an authorization server in Jeopsok.
+6. Keep issuer, audience, JWKS, and required-scope values explicit and environment-specific.
+7. Use `operator` with a small executable allowlist rather than `full` when possible.
+8. Use `full` and CodeAct only on a host, VM, or container where remote shell-equivalent authority is intentional.
+9. Keep CodeAct checkpoints/logs, tokens, private keys, and production data out of public repositories and bug reports.
 
 Authentication controls **who can call Jeopsok**. Permission profiles control **which Jeopsok capabilities are exposed**. OS permissions, containers/VMs, network policy, and the capabilities of allowed executables remain the ultimate security boundary.
