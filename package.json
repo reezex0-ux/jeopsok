@@ -1,6 +1,6 @@
 {
   "name": "jeopsok",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Jeopsok (접속): a safe-by-default remote agent runtime with stateless MCP, OAuth, durable process handles, and optional CodeAct",
   "license": "MIT",
   "type": "module",
