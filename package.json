@@ -1,7 +1,7 @@
 {
   "name": "jeopsok",
-  "version": "0.2.0",
-  "description": "Jeopsok (\uc811\uc18d): a minimal stateless MCP remote runtime for command, process, and file access",
+  "version": "0.3.0",
+  "description": "Jeopsok (접속): a safe-by-default remote agent runtime with stateless MCP, OAuth, durable process handles, and optional CodeAct",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -20,7 +20,8 @@
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "express": "5.2.1",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@modelcontextprotocol/server-legacy": "^2.0.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
