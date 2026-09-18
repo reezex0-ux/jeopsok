@@ -170,7 +170,7 @@ export async function startHttpServer(
     response.json({
       status: "ok",
       service: "jeopsok",
-      version: "0.3.0",
+      version: "0.3.1",
       transportMode: "mcp-2026-stateless",
       protocolRevision: "2026-07-28",
       legacyStatelessFallback: true,
