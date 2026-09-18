@@ -2,28 +2,54 @@
 
 ## Recommended default
 
-Run Jeopsok on loopback as a dedicated non-root user with the `workspace` profile:
+For a private deployment, run Jeopsok on loopback as a dedicated non-root user with the `workspace` profile:
 
 ```dotenv
 MCP_HOST=127.0.0.1
 MCP_PORT=3000
 MCP_ALLOW_NO_AUTH=true
 MCP_AUTH_TOKEN=
+MCP_OAUTH_ENABLED=false
 JEOPSOK_PROFILE=workspace
 MCP_DEFAULT_CWD=/srv/jeopsok-workspace
 JEOPSOK_ALLOWED_ROOTS=/srv/jeopsok-workspace
 ```
 
-Then point a trusted private tunnel/authentication layer at `http://127.0.0.1:3000/mcp`.
+Point a trusted private tunnel or authentication gateway at `http://127.0.0.1:3000/mcp`.
 
-`MCP_ALLOW_NO_AUTH=true` is appropriate only when the listener itself is unreachable except through that trusted boundary.
+## Direct HTTPS + OAuth
+
+For an internet-reachable MCP endpoint, keep Jeopsok behind TLS and enable the built-in OAuth server:
+
+```dotenv
+MCP_HOST=127.0.0.1
+MCP_PUBLIC_URL=https://mcp.example.com
+MCP_ALLOWED_HOSTS=mcp.example.com,127.0.0.1,localhost
+MCP_TRUST_PROXY_HOPS=1
+
+MCP_AUTH_TOKEN=
+MCP_ALLOW_NO_AUTH=false
+MCP_OAUTH_ENABLED=true
+MCP_OAUTH_APPROVAL_KEY=<long-random-secret>
+MCP_OAUTH_ISSUER=https://mcp.example.com
+MCP_OAUTH_RESOURCE=https://mcp.example.com/mcp
+MCP_OAUTH_STATE_FILE=/var/lib/jeopsok/oauth-state.json
+
+JEOPSOK_PROFILE=workspace
+MCP_DEFAULT_CWD=/srv/jeopsok-workspace
+JEOPSOK_ALLOWED_ROOTS=/srv/jeopsok-workspace
+```
+
+The OAuth implementation supports Dynamic Client Registration, Authorization Code + PKCE (S256), refresh-token rotation/replay detection, revocation, and protected-resource metadata.
+
+Set `MCP_TRUST_PROXY_HOPS=1` only when exactly one trusted reverse proxy sits in front of Jeopsok. Do not reuse that value for direct listeners or different proxy topologies.
 
 ## Choosing a permission profile
 
 - `readonly`: reference/search hosts where mutation is unnecessary.
-- `workspace`: default for coding/file workflows without shell access.
-- `operator`: only when specific executable capabilities are required. Set `JEOPSOK_ALLOWED_COMMANDS` and keep the list small.
-- `full`: only on a worker where remote shell-equivalent access is intentional.
+- `workspace`: default for file workflows without shell access.
+- `operator`: specific command capabilities through a small executable allowlist.
+- `full`: remote shell-equivalent access; optionally includes CodeAct.
 
 For non-full profiles, multiple filesystem roots can be comma-separated:
 
@@ -31,49 +57,35 @@ For non-full profiles, multiple filesystem roots can be comma-separated:
 JEOPSOK_ALLOWED_ROOTS=/srv/project,/srv/shared-input
 ```
 
-Roots must already exist when Jeopsok starts.
+## Full + CodeAct
 
-## Operator example
-
-```dotenv
-JEOPSOK_PROFILE=operator
-JEOPSOK_ALLOWED_ROOTS=/srv/project
-JEOPSOK_ALLOWED_COMMANDS=git,node
-JEOPSOK_ALLOWED_ENV=CI,NODE_ENV
-```
-
-Do not confuse an executable allowlist with a sandbox. Powerful programs can escape the intent of a narrow filesystem profile by design. Use OS/container/VM isolation for a hard host boundary.
-
-## Direct internet access
-
-Jeopsok Core intentionally does not implement an authorization server. Keep it on loopback behind a production HTTPS/authentication gateway, or use a client that supports the static bearer token.
-
-```text
-MCP client -> HTTPS/auth gateway -> 127.0.0.1:3000 -> Jeopsok
-```
-
-For static bearer mode:
+CodeAct is intentionally unavailable outside `full`.
 
 ```dotenv
-MCP_AUTH_TOKEN=<long-random-secret>
-MCP_ALLOW_NO_AUTH=false
+JEOPSOK_PROFILE=full
+MCP_CODEACT_ENABLED=true
+MCP_CODEACT_MAX_SESSIONS=8
+MCP_CODEACT_INTERACTIVE_MAX_ACTIONS=24
+MCP_CODEACT_INTERACTIVE_MAX_EXECUTION_CALLS=32
+MCP_CODEACT_LOG_FILE=/var/lib/jeopsok/codeact-actions.jsonl
+MCP_CODEACT_RUN_STATE_DIR=/var/lib/jeopsok/runs
 ```
 
-Use HTTPS whenever a bearer token crosses an untrusted network.
+Use a dedicated worker, VM, or container when granting this level of access.
 
 ## systemd example
 
 1. Create a dedicated `jeopsok` OS user.
 2. Install under `/opt/jeopsok`.
-3. Create `/srv/jeopsok-workspace` owned by that user.
-4. Copy `deploy/jeopsok.env.example` to `/etc/jeopsok.env` and edit values.
+3. Create the workspace and state directories.
+4. Copy `deploy/jeopsok.env.example` to `/etc/jeopsok.env`.
 5. Install `deploy/jeopsok.service`.
-6. Put a trusted tunnel or HTTPS/auth gateway in front if remote access is required.
+6. Put HTTPS or a trusted private tunnel in front.
 
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin jeopsok
-sudo mkdir -p /opt/jeopsok /srv/jeopsok-workspace
-sudo chown -R jeopsok:jeopsok /srv/jeopsok-workspace
+sudo mkdir -p /opt/jeopsok /srv/jeopsok-workspace /var/lib/jeopsok
+sudo chown -R jeopsok:jeopsok /srv/jeopsok-workspace /var/lib/jeopsok
 
 sudo cp -a package.json package-lock.json tsconfig.json src /opt/jeopsok/
 cd /opt/jeopsok
@@ -89,8 +101,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now jeopsok
 ```
 
-Only set `MCP_TRUST_PROXY_HOPS=1` when exactly one trusted reverse proxy is in front of Jeopsok.
-
 ## Updating
 
 ```bash
@@ -102,4 +112,4 @@ sudo systemctl restart jeopsok
 curl http://127.0.0.1:3000/health
 ```
 
-Authentication controls who can reach Jeopsok. Permission profiles reduce the exposed capability set. OS users, containers/VMs, network policy, and the capabilities of allowed executables remain the ultimate security boundary.
+Authentication controls who can reach Jeopsok. Permission profiles reduce the exposed capability set. OS users, containers/VMs, network policy, and the capabilities of allowed executables remain the final security boundary.
