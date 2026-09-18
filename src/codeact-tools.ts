@@ -21,11 +21,11 @@ export function registerCodeActTools(
     {
       title: "Create persistent Python session",
       description:
-        "Create a persistent Python worker for multi-step full-profile host work. auto mode resolves scheduled/automation metadata or labels to unattended; otherwise it is interactive. Interactive sessions enforce configurable action and process-call budgets.",
+        "Create a persistent Python worker for multi-step full-profile host work. Client input cannot enable unattended mode. Only server-owned MCP_RUN_MODE=unattended may remove interactive action/process-call budgets; otherwise sessions are interactive.",
       inputSchema: z.object({
         cwd: z.string().optional().describe("Initial working directory. Defaults to MCP_DEFAULT_CWD."),
-        label: z.string().max(120).optional().describe("Optional human-readable session label."),
-        runMode: z.enum(requestedRunModes).optional().default("auto"),
+        label: z.string().max(120).optional().describe("Optional human-readable session label. Labels never change the execution budget."),
+        runMode: z.enum(requestedRunModes).optional().default("auto").describe("Client hint. unattended is rejected unless the server is configured with MCP_RUN_MODE=unattended."),
       }),
       annotations: fullAccessAnnotations,
     },

@@ -8,10 +8,10 @@ import {
   type AuthRouterOptions,
 } from "@modelcontextprotocol/server-legacy/auth";
 import { toNodeHandler } from "@modelcontextprotocol/node";
-import express, { type Request, type Response } from "express";
+import express, { type Request, type RequestHandler, type Response } from "express";
 
 import { createBearerAuth, createHostValidation } from "./auth.js";
-import type { AppConfig } from "./config.js";
+import { assertSafeHttpConfig, type AppConfig } from "./config.js";
 import { errorMessage } from "./errors.js";
 import { createMcpServer, type McpServices } from "./mcp-server.js";
 import { JeopsokOAuthProvider, OAUTH_SCOPES } from "./oauth.js";
@@ -19,6 +19,52 @@ import { JeopsokOAuthProvider, OAUTH_SCOPES } from "./oauth.js";
 export interface RunningHttpServer {
   httpServer: HttpServer;
   close: () => Promise<void>;
+}
+
+function createSocketRateLimiter(
+  paths: ReadonlySet<string>,
+  windowMs: number,
+  limit: number,
+): RequestHandler {
+  const buckets = new Map<string, { count: number; resetAt: number }>();
+
+  return (request, response, next) => {
+    if (!paths.has(request.path)) {
+      next();
+      return;
+    }
+
+    const now = Date.now();
+    if (buckets.size > 4096) {
+      for (const [key, bucket] of buckets) {
+        if (bucket.resetAt <= now) buckets.delete(key);
+      }
+    }
+
+    const remoteAddress = request.socket.remoteAddress || "unknown";
+    const key = `${remoteAddress}\n${request.path}`;
+    const current = buckets.get(key);
+    const bucket =
+      !current || current.resetAt <= now
+        ? { count: 0, resetAt: now + windowMs }
+        : current;
+
+    bucket.count += 1;
+    buckets.set(key, bucket);
+
+    if (bucket.count > limit) {
+      response
+        .status(429)
+        .set("Retry-After", String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))))
+        .json({
+          error: "too_many_requests",
+          error_description: "OAuth endpoint rate limit exceeded",
+        });
+      return;
+    }
+
+    next();
+  };
 }
 
 function rpcMethod(request: Request): string | undefined {
@@ -45,6 +91,7 @@ export async function startHttpServer(
   config: AppConfig,
   services: McpServices,
 ): Promise<RunningHttpServer> {
+  assertSafeHttpConfig(config);
   const app = express();
   app.disable("x-powered-by");
   if (config.trustProxyHops > 0) app.set("trust proxy", config.trustProxyHops);
@@ -70,6 +117,12 @@ export async function startHttpServer(
       resourceServerUrl: oauthProvider.resourceUrl,
       scopesSupported: [...OAUTH_SCOPES],
       resourceName: "jeopsok",
+      // The legacy SDK's default limiters key off Express client IP, which can
+      // depend on X-Forwarded-For when trust proxy is enabled. Jeopsok instead
+      // rate-limits these endpoints by the TCP peer address below.
+      authorizationOptions: { rateLimit: false },
+      clientRegistrationOptions: { rateLimit: false },
+      tokenOptions: { rateLimit: false },
     } satisfies AuthRouterOptions;
 
     const oauthMetadata = {
@@ -90,6 +143,13 @@ export async function startHttpServer(
       next();
     });
 
+    app.use(
+      createSocketRateLimiter(
+        new Set(["/register", "/authorize", "/token"]),
+        config.oauthRateLimitWindowMs,
+        config.oauthRateLimitMaxRequests,
+      ),
+    );
     app.use(mcpAuthRouter(oauthRouterOptions));
   }
 
@@ -111,7 +171,7 @@ export async function startHttpServer(
     response.json({
       status: "ok",
       service: "jeopsok",
-      version: "0.3.0",
+      version: "0.3.1",
       transportMode: "mcp-2026-stateless",
       protocolRevision: "2026-07-28",
       legacyStatelessFallback: true,

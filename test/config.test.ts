@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultShellForPlatform, loadConfig } from "../src/config.js";
+import { assertSafeHttpConfig, defaultShellForPlatform, loadConfig } from "../src/config.js";
 
 describe("config", () => {
   it("requires an authentication posture by default", () => {
@@ -51,9 +51,31 @@ describe("config", () => {
     expect(full).toMatchObject({ accessProfile: "full", codeActEnabled: true });
   });
 
-  it("allows a trusted local tunnel configuration", () => {
+  it("allows no-auth only on loopback", () => {
     const config = loadConfig({ MCP_ALLOW_NO_AUTH: "true", MCP_HOST: "127.0.0.1" }, "/tmp");
     expect(config).toMatchObject({ allowNoAuth: true, host: "127.0.0.1", port: 3000, endpoint: "/mcp" });
+
+    const unsafe = loadConfig({
+      MCP_ALLOW_NO_AUTH: "true",
+      MCP_HOST: "0.0.0.0",
+      JEOPSOK_PROFILE: "full",
+    }, "/tmp");
+    expect(() => assertSafeHttpConfig(unsafe)).toThrow(/loopback MCP_HOST/);
+  });
+
+  it("allows trust proxy only behind a loopback listener", () => {
+    expect(loadConfig({
+      MCP_AUTH_TOKEN: "x",
+      MCP_HOST: "127.0.0.1",
+      MCP_TRUST_PROXY_HOPS: "1",
+    }, "/tmp").trustProxyHops).toBe(1);
+
+    const unsafe = loadConfig({
+      MCP_AUTH_TOKEN: "x",
+      MCP_HOST: "0.0.0.0",
+      MCP_TRUST_PROXY_HOPS: "1",
+    }, "/tmp");
+    expect(() => assertSafeHttpConfig(unsafe)).toThrow(/requires a loopback MCP_HOST/);
   });
 
   it("normalizes endpoints and numeric limits", () => {

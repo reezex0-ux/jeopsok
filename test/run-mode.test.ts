@@ -3,39 +3,39 @@ import { describe, expect, it } from "vitest";
 import { resolveRunMode } from "../src/run-mode.js";
 
 describe("resolveRunMode", () => {
-  it("forces unattended when runtime scheduling signals conflict with an interactive hint", () => {
-    expect(resolveRunMode("interactive", { label: "nightly cron" })).toMatchObject({
-      mode: "unattended",
-      source: "label",
+  it("does not trust labels or request metadata to remove interactive budgets", () => {
+    expect(resolveRunMode("auto", { label: "nightly cron", env: {} })).toMatchObject({
+      mode: "interactive",
+      source: "default",
     });
-    expect(resolveRunMode("interactive", { requestMeta: { "openai/automation": { scheduled: true } } })).toMatchObject({
-      mode: "unattended",
-      source: "request_meta",
-    });
-    expect(resolveRunMode("unattended", { label: "live chat" })).toMatchObject({
-      mode: "unattended",
-      source: "explicit",
+    expect(resolveRunMode("auto", {
+      requestMeta: { "openai/automation": { scheduled: true } },
+      env: {},
+    })).toMatchObject({
+      mode: "interactive",
+      source: "default",
+      requestMetaKeys: ["openai/automation"],
     });
   });
 
-  it("detects automation from request metadata, environment, and labels in auto mode", () => {
-    expect(resolveRunMode("auto", { requestMeta: { "openai/automation": { scheduled: true } } })).toMatchObject({
+  it("allows only server-owned environment configuration to enable unattended mode", () => {
+    expect(resolveRunMode("interactive", { env: { MCP_RUN_MODE: "unattended" } })).toMatchObject({
       mode: "unattended",
-      source: "request_meta",
-      requestMetaKeys: ["openai/automation"],
+      source: "environment",
     });
     expect(resolveRunMode("auto", { env: { MCP_RUN_MODE: "unattended" } })).toMatchObject({
       mode: "unattended",
       source: "environment",
     });
-    expect(resolveRunMode("auto", { label: "morning-briefing scheduled" })).toMatchObject({
-      mode: "unattended",
-      source: "label",
-    });
   });
 
-  it("defaults auto mode to interactive when no unattended signal exists", () => {
-    expect(resolveRunMode("auto", { label: "debug session" , env: {} })).toMatchObject({
+  it("rejects a client-requested unattended mode without trusted server configuration", () => {
+    expect(() => resolveRunMode("unattended", { label: "cron job", env: {} }))
+      .toThrow(/server-owned MCP_RUN_MODE=unattended/);
+  });
+
+  it("defaults auto mode to interactive", () => {
+    expect(resolveRunMode("auto", { label: "debug session", env: {} })).toMatchObject({
       mode: "interactive",
       source: "default",
     });

@@ -19,6 +19,10 @@ export interface AppConfig {
   oauthAccessTokenTtlSeconds: number;
   oauthRefreshTokenTtlSeconds: number;
   oauthAuthorizationCodeTtlSeconds: number;
+  oauthClientRetentionSeconds: number;
+  oauthMaxClients: number;
+  oauthRateLimitWindowMs: number;
+  oauthRateLimitMaxRequests: number;
   defaultCwd: string;
   defaultShell: string;
   accessProfile: AccessProfile;
@@ -90,6 +94,24 @@ export function defaultShellForPlatform(
   return env.SHELL?.trim() || "/bin/bash";
 }
 
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
+}
+
+export function assertSafeHttpConfig(config: Pick<AppConfig, "host" | "trustProxyHops" | "allowNoAuth" | "authToken" | "oauthEnabled">): void {
+  if (config.allowNoAuth && !config.authToken && !config.oauthEnabled && !isLoopbackHost(config.host)) {
+    throw new Error(
+      "MCP_ALLOW_NO_AUTH=true is allowed only with a loopback MCP_HOST. Bind to 127.0.0.1/::1/localhost behind the trusted upstream, or enable bearer/OAuth authentication.",
+    );
+  }
+  if (config.trustProxyHops > 0 && !isLoopbackHost(config.host)) {
+    throw new Error(
+      "MCP_TRUST_PROXY_HOPS>0 requires a loopback MCP_HOST so clients cannot bypass the trusted reverse proxy and spoof forwarded addresses.",
+    );
+  }
+}
+
 function normalizeEndpoint(value: string | undefined): string {
   const endpoint = value?.trim() || "/mcp";
   if (!endpoint.startsWith("/")) throw new Error("MCP_ENDPOINT must start with '/'");
@@ -120,6 +142,8 @@ export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
   processCwd = process.cwd(),
 ): AppConfig {
+  const host = env.MCP_HOST?.trim() || "0.0.0.0";
+  const trustProxyHops = parseInteger(env.MCP_TRUST_PROXY_HOPS, 0, "MCP_TRUST_PROXY_HOPS", 0, 16);
   const allowNoAuth = parseBoolean(env.MCP_ALLOW_NO_AUTH, false);
   const authToken = env.MCP_AUTH_TOKEN?.trim() || undefined;
   const oauthEnabled = parseBoolean(env.MCP_OAUTH_ENABLED, false);
@@ -137,7 +161,6 @@ export function loadConfig(
       "MCP_OAUTH_APPROVAL_KEY (or MCP_AUTH_TOKEN for backward compatibility) is required when OAuth is enabled",
     );
   }
-
   const rawDefaultCwd = path.resolve(env.MCP_DEFAULT_CWD?.trim() || processCwd);
   const defaultCwd = normalizeAllowedRoots([rawDefaultCwd], rawDefaultCwd)[0]!;
   const accessProfile = parseProfile(env.JEOPSOK_PROFILE);
@@ -164,12 +187,12 @@ export function loadConfig(
 
   const allowedHosts = parseList(env.MCP_ALLOWED_HOSTS).map((value) => value.toLowerCase());
   return {
-    host: env.MCP_HOST?.trim() || "0.0.0.0",
+    host,
     port: parseInteger(env.MCP_PORT, 3000, "MCP_PORT", 1, 65_535),
     endpoint,
     publicUrl,
     allowedHosts: allowedHosts.length > 0 ? allowedHosts : undefined,
-    trustProxyHops: parseInteger(env.MCP_TRUST_PROXY_HOPS, 0, "MCP_TRUST_PROXY_HOPS", 0, 16),
+    trustProxyHops,
     authToken,
     allowNoAuth,
     oauthEnabled,
@@ -187,6 +210,18 @@ export function loadConfig(
     ),
     oauthAuthorizationCodeTtlSeconds: parseInteger(
       env.MCP_OAUTH_AUTHORIZATION_CODE_TTL_SECONDS, 5 * 60, "MCP_OAUTH_AUTHORIZATION_CODE_TTL_SECONDS", 60,
+    ),
+    oauthClientRetentionSeconds: parseInteger(
+      env.MCP_OAUTH_CLIENT_RETENTION_SECONDS, 7 * 24 * 60 * 60, "MCP_OAUTH_CLIENT_RETENTION_SECONDS", 3600,
+    ),
+    oauthMaxClients: parseInteger(
+      env.MCP_OAUTH_MAX_CLIENTS, 1000, "MCP_OAUTH_MAX_CLIENTS", 1, 100_000,
+    ),
+    oauthRateLimitWindowMs: parseInteger(
+      env.MCP_OAUTH_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000, "MCP_OAUTH_RATE_LIMIT_WINDOW_MS", 1000,
+    ),
+    oauthRateLimitMaxRequests: parseInteger(
+      env.MCP_OAUTH_RATE_LIMIT_MAX_REQUESTS, 100, "MCP_OAUTH_RATE_LIMIT_MAX_REQUESTS", 1, 100_000,
     ),
     defaultCwd,
     defaultShell: defaultShellForPlatform(env),

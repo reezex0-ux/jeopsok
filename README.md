@@ -4,9 +4,13 @@
 
 Jeopsok targets MCP `2026-07-28` over Streamable HTTP while retaining the SDK's stateless compatibility path for older clients.
 
-## v0.3 highlights
+## v0.3.1 security hardening
 
 - Safe permission profiles remain the default: `readonly`, `workspace`, `operator`, `full`
+- No-auth HTTP serving fails closed unless `MCP_HOST` is loopback
+- Trust-proxy mode is accepted only behind a loopback listener; OAuth endpoint rate limits use the TCP peer address rather than X-Forwarded-For
+- CodeAct unattended mode can be enabled only by server-owned `MCP_RUN_MODE=unattended`
+- Dynamic OAuth client registrations are pruned and bounded
 - Built-in OAuth 2.1 authorization server with DCR, Authorization Code + PKCE (S256), refresh rotation, revocation, and protected-resource metadata
 - Persistent CodeAct Python sessions for multi-step work without repeated MCP round trips
 - Interactive vs. unattended CodeAct run modes with configurable budgets and checkpoints
@@ -133,7 +137,7 @@ MCP_AUTH_TOKEN=
 MCP_OAUTH_ENABLED=false
 ```
 
-Do not expose that configuration directly to an untrusted network.
+Jeopsok enforces this posture: unauthenticated HTTP mode is accepted only when `MCP_HOST` is loopback. Do not expose that configuration directly to an untrusted network.
 
 ## CodeAct
 
@@ -147,7 +151,7 @@ MCP_CODEACT_INTERACTIVE_MAX_ACTIONS=24
 MCP_CODEACT_INTERACTIVE_MAX_EXECUTION_CALLS=32
 ```
 
-`runMode=auto` defaults to interactive and recognizes scheduled/automation/cron metadata or labels as unattended. Interactive sessions receive action/process-call budgets. Unattended sessions are exempt from those interactive limits. Session metadata is checkpointed after actions, but Python memory itself is process-local and is lost when the worker or Jeopsok restarts.
+`runMode=auto` defaults to interactive. Client-provided labels, request metadata, and `runMode=unattended` cannot remove interactive budgets. Only server-owned `MCP_RUN_MODE=unattended` may create unattended sessions. Session metadata is checkpointed after actions, but Python memory itself is process-local and is lost when the worker or Jeopsok restarts.
 
 CodeAct is not a sandbox. A `full` CodeAct worker has the same host authority as the Jeopsok process.
 
