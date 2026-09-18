@@ -175,6 +175,8 @@ class PersistentOAuthStore implements OAuthRegisteredClientsStore {
     private readonly stateFile: string,
     private readonly accessTokenTtlSeconds: number,
     private readonly refreshTokenTtlSeconds: number,
+    private readonly clientRetentionSeconds: number,
+    private readonly maxClients: number,
   ) {}
 
   private async ensureLoaded(): Promise<void> {
@@ -196,6 +198,39 @@ class PersistentOAuthStore implements OAuthRegisteredClientsStore {
       if (token.expiresAt <= now) {
         delete this.state.tokens[hash];
       }
+    }
+  }
+
+  private pruneClients(reserveSlots = 0): void {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+    const activeClientIds = new Set(
+      Object.values(this.state.tokens)
+        .filter((token) => token.expiresAt > nowMs)
+        .map((token) => token.clientId),
+    );
+
+    for (const [clientId, client] of Object.entries(this.state.clients)) {
+      const issuedAt = client.client_id_issued_at;
+      if (
+        !activeClientIds.has(clientId) &&
+        typeof issuedAt === "number" &&
+        issuedAt + this.clientRetentionSeconds <= nowSeconds
+      ) {
+        delete this.state.clients[clientId];
+      }
+    }
+
+    const targetSize = Math.max(0, this.maxClients - reserveSlots);
+    if (Object.keys(this.state.clients).length <= targetSize) return;
+
+    const evictable = Object.entries(this.state.clients)
+      .filter(([clientId]) => !activeClientIds.has(clientId))
+      .sort(([, a], [, b]) => (a.client_id_issued_at ?? 0) - (b.client_id_issued_at ?? 0));
+
+    for (const [clientId] of evictable) {
+      if (Object.keys(this.state.clients).length <= targetSize) break;
+      delete this.state.clients[clientId];
     }
   }
 
@@ -223,6 +258,7 @@ class PersistentOAuthStore implements OAuthRegisteredClientsStore {
       const snapshot = structuredClone(this.state);
       try {
         this.pruneExpired();
+        this.pruneClients();
         const result = await operation();
         await this.persist();
         return result;
@@ -266,6 +302,17 @@ class PersistentOAuthStore implements OAuthRegisteredClientsStore {
       throw new InvalidClientMetadataError(problem);
     }
     return this.mutate(() => {
+      if (!this.state.clients[registered.client_id]) {
+        this.pruneClients(1);
+      }
+      if (
+        !this.state.clients[registered.client_id] &&
+        Object.keys(this.state.clients).length >= this.maxClients
+      ) {
+        throw new InvalidClientMetadataError(
+          "OAuth client registration capacity reached; retry after inactive registrations expire",
+        );
+      }
       this.state.clients[registered.client_id] = registered;
       return registered;
     });
@@ -495,6 +542,8 @@ export class JeopsokOAuthProvider implements OAuthServerProvider {
       config.oauthStateFile,
       config.oauthAccessTokenTtlSeconds,
       config.oauthRefreshTokenTtlSeconds,
+      config.oauthClientRetentionSeconds,
+      config.oauthMaxClients,
     );
   }
 
