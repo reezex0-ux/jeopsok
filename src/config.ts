@@ -12,17 +12,11 @@ export interface AppConfig {
   authToken: string | undefined;
   allowNoAuth: boolean;
   oauthEnabled: boolean;
-  oauthApprovalKey: string | undefined;
   oauthIssuerUrl: string | undefined;
   oauthResourceUrl: string | undefined;
-  oauthStateFile: string;
-  oauthAccessTokenTtlSeconds: number;
-  oauthRefreshTokenTtlSeconds: number;
-  oauthAuthorizationCodeTtlSeconds: number;
-  oauthClientRetentionSeconds: number;
-  oauthMaxClients: number;
-  oauthRateLimitWindowMs: number;
-  oauthRateLimitMaxRequests: number;
+  oauthJwksUrl: string | undefined;
+  oauthAudience: string | undefined;
+  oauthRequiredScopes: string[];
   defaultCwd: string;
   defaultShell: string;
   accessProfile: AccessProfile;
@@ -99,7 +93,9 @@ export function isLoopbackHost(host: string): boolean {
   return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
 
-export function assertSafeHttpConfig(config: Pick<AppConfig, "host" | "trustProxyHops" | "allowNoAuth" | "authToken" | "oauthEnabled">): void {
+export function assertSafeHttpConfig(
+  config: Pick<AppConfig, "host" | "trustProxyHops" | "allowNoAuth" | "authToken" | "oauthEnabled">,
+): void {
   if (config.allowNoAuth && !config.authToken && !config.oauthEnabled && !isLoopbackHost(config.host)) {
     throw new Error(
       "MCP_ALLOW_NO_AUTH=true is allowed only with a loopback MCP_HOST. Bind to 127.0.0.1/::1/localhost behind the trusted upstream, or enable bearer/OAuth authentication.",
@@ -118,8 +114,11 @@ function normalizeEndpoint(value: string | undefined): string {
   return endpoint.length > 1 ? endpoint.replace(/\/+$/, "") : endpoint;
 }
 
-function normalizeOAuthUrl(value: string | undefined, name: string): string {
-  if (!value) throw new Error(`${name} is required when MCP_OAUTH_ENABLED=true`);
+function normalizeSecureUrl(value: string | undefined, name: string, required: boolean): string | undefined {
+  if (!value) {
+    if (required) throw new Error(`${name} is required when MCP_OAUTH_ENABLED=true`);
+    return undefined;
+  }
   let url: URL;
   try {
     url = new URL(value);
@@ -134,7 +133,7 @@ function normalizeOAuthUrl(value: string | undefined, name: string): string {
     throw new Error(`${name} must use HTTPS (HTTP is allowed only for loopback tests)`);
   }
   if (url.username || url.password) throw new Error(`${name} must not contain user credentials`);
-  if (url.search || url.hash) throw new Error(`${name} must not contain a query string or fragment`);
+  if (url.hash) throw new Error(`${name} must not contain a fragment`);
   return url.href;
 }
 
@@ -147,20 +146,13 @@ export function loadConfig(
   const allowNoAuth = parseBoolean(env.MCP_ALLOW_NO_AUTH, false);
   const authToken = env.MCP_AUTH_TOKEN?.trim() || undefined;
   const oauthEnabled = parseBoolean(env.MCP_OAUTH_ENABLED, false);
-  const oauthApprovalKey = oauthEnabled
-    ? env.MCP_OAUTH_APPROVAL_KEY?.trim() || authToken
-    : undefined;
 
   if (!allowNoAuth && !authToken && !oauthEnabled) {
     throw new Error(
       "MCP_AUTH_TOKEN is required unless OAuth is enabled. Set MCP_ALLOW_NO_AUTH=true only behind a trusted local tunnel or authentication gateway.",
     );
   }
-  if (oauthEnabled && !oauthApprovalKey) {
-    throw new Error(
-      "MCP_OAUTH_APPROVAL_KEY (or MCP_AUTH_TOKEN for backward compatibility) is required when OAuth is enabled",
-    );
-  }
+
   const rawDefaultCwd = path.resolve(env.MCP_DEFAULT_CWD?.trim() || processCwd);
   const defaultCwd = normalizeAllowedRoots([rawDefaultCwd], rawDefaultCwd)[0]!;
   const accessProfile = parseProfile(env.JEOPSOK_PROFILE);
@@ -176,14 +168,26 @@ export function loadConfig(
   const endpoint = normalizeEndpoint(env.MCP_ENDPOINT);
   const publicUrl = env.MCP_PUBLIC_URL?.trim().replace(/\/+$/, "") || undefined;
   const oauthIssuerUrl = oauthEnabled
-    ? normalizeOAuthUrl(env.MCP_OAUTH_ISSUER?.trim() || publicUrl, "MCP_OAUTH_ISSUER")
+    ? normalizeSecureUrl(env.MCP_OAUTH_ISSUER?.trim(), "MCP_OAUTH_ISSUER", true)
     : undefined;
   const oauthResourceUrl = oauthEnabled
-    ? normalizeOAuthUrl(
+    ? normalizeSecureUrl(
         env.MCP_OAUTH_RESOURCE?.trim() || (publicUrl ? `${publicUrl}${endpoint}` : undefined),
         "MCP_OAUTH_RESOURCE",
+        true,
       )
     : undefined;
+  const oauthJwksUrl = oauthEnabled
+    ? normalizeSecureUrl(env.MCP_OAUTH_JWKS_URL?.trim(), "MCP_OAUTH_JWKS_URL", true)
+    : undefined;
+  const oauthAudience = oauthEnabled
+    ? (env.MCP_OAUTH_AUDIENCE?.trim() || oauthResourceUrl)
+    : undefined;
+  const oauthRequiredScopes = oauthEnabled
+    ? (parseList(env.MCP_OAUTH_REQUIRED_SCOPES).length > 0
+        ? parseList(env.MCP_OAUTH_REQUIRED_SCOPES)
+        : ["mcp:tools"])
+    : [];
 
   const allowedHosts = parseList(env.MCP_ALLOWED_HOSTS).map((value) => value.toLowerCase());
   return {
@@ -196,33 +200,11 @@ export function loadConfig(
     authToken,
     allowNoAuth,
     oauthEnabled,
-    oauthApprovalKey,
     oauthIssuerUrl,
     oauthResourceUrl,
-    oauthStateFile: path.resolve(
-      env.MCP_OAUTH_STATE_FILE?.trim() || path.join(processCwd, ".jeopsok-oauth-state.json"),
-    ),
-    oauthAccessTokenTtlSeconds: parseInteger(
-      env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS, 60 * 60, "MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS", 300,
-    ),
-    oauthRefreshTokenTtlSeconds: parseInteger(
-      env.MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS, 30 * 24 * 60 * 60, "MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS", 3600,
-    ),
-    oauthAuthorizationCodeTtlSeconds: parseInteger(
-      env.MCP_OAUTH_AUTHORIZATION_CODE_TTL_SECONDS, 5 * 60, "MCP_OAUTH_AUTHORIZATION_CODE_TTL_SECONDS", 60,
-    ),
-    oauthClientRetentionSeconds: parseInteger(
-      env.MCP_OAUTH_CLIENT_RETENTION_SECONDS, 7 * 24 * 60 * 60, "MCP_OAUTH_CLIENT_RETENTION_SECONDS", 3600,
-    ),
-    oauthMaxClients: parseInteger(
-      env.MCP_OAUTH_MAX_CLIENTS, 1000, "MCP_OAUTH_MAX_CLIENTS", 1, 100_000,
-    ),
-    oauthRateLimitWindowMs: parseInteger(
-      env.MCP_OAUTH_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000, "MCP_OAUTH_RATE_LIMIT_WINDOW_MS", 1000,
-    ),
-    oauthRateLimitMaxRequests: parseInteger(
-      env.MCP_OAUTH_RATE_LIMIT_MAX_REQUESTS, 100, "MCP_OAUTH_RATE_LIMIT_MAX_REQUESTS", 1, 100_000,
-    ),
+    oauthJwksUrl,
+    oauthAudience,
+    oauthRequiredScopes,
     defaultCwd,
     defaultShell: defaultShellForPlatform(env),
     accessProfile,
