@@ -21,8 +21,8 @@ async function main(): Promise<void> {
       ? "authentication: upstream/private tunnel"
       : config.oauthEnabled
         ? config.authToken
-          ? "authentication: bearer token + OAuth 2.1"
-          : "authentication: OAuth 2.1"
+          ? "authentication: bearer token + external OAuth resource server"
+          : "authentication: external OAuth resource server"
         : "authentication: bearer token",
   );
   console.log(`CodeAct: ${services.codeActManager ? "enabled (full profile)" : "disabled"}`);
